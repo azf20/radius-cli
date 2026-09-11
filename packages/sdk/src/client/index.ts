@@ -1,12 +1,12 @@
 import { x402Client, x402HTTPClient } from '@x402/core/client';
-import type { PaymentRequired, PaymentRequirements } from '@x402/core/types';
-import { ExactEvmScheme, toClientEvmSigner, type ClientEvmSigner } from '@x402/evm';
-import { createPublicClient, createWalletClient, http, maxUint256, type Account, type PublicClient, type WalletClient } from 'viem';
+import type { PaymentPayloadResult, PaymentRequired, PaymentRequirements, PaymentRequirementsV1, SchemeNetworkClient } from '@x402/core/types';
+import { ExactEvmScheme, UptoEvmScheme, toClientEvmSigner, type ClientEvmSigner } from '@x402/evm';
+import { createPublicClient, createWalletClient, http, isAddress, maxUint256, type Account, type PublicClient, type WalletClient } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { formatAmount, resolvePrice, type Price } from '../amounts.js';
 import { RadiusPaymentError } from '../errors.js';
 import { PERMIT2_ADDRESS, resolveNetwork, type Address, type NetworkInput, type NetworkOverrides, type RadiusNetwork } from '../networks.js';
-import { decodePaymentReceipt, type PaymentReceipt } from '../receipt.js';
+import { decodePaymentReceipt, parseUptoSettlementAmount, type PaymentReceipt } from '../receipt.js';
 import { getSettlement, type Settlement } from '../settlement.js';
 
 /**
@@ -15,9 +15,19 @@ import { getSettlement, type Settlement } from '../settlement.js';
  */
 export type RadiusSigner = `0x${string}` | ClientEvmSigner | WalletClient;
 
+/** x402 payment schemes this client can pay. */
+export type PaymentScheme = 'exact' | 'upto';
+
+/** A challenge entry from either protocol version (v1 prices in `maxAmountRequired`, v2 in `amount`). */
+export type AnyPaymentRequirements = PaymentRequirements | PaymentRequirementsV1;
+
 /** What a server is asking for, presented to `onPaymentRequired` before anything is signed. */
 export interface PaymentOffer {
-  /** Atomic amount, e.g. "10000". */
+  /** x402 protocol version of the challenge: v1 pays with `X-PAYMENT`, v2 with `PAYMENT-SIGNATURE`. */
+  x402Version: 1 | 2;
+  /** `exact`: pay exactly `amount`. `upto`: authorise up to `amount`; the facilitator charges what was used. */
+  scheme: PaymentScheme;
+  /** Atomic amount, e.g. "10000". For `upto` this is the authorised maximum, not what will be charged. */
   amount: string;
   /** Display amount, e.g. "0.01 SBC". */
   amountFormatted: string;
@@ -25,8 +35,8 @@ export interface PaymentOffer {
   payTo: Address;
   network: string;
   resource: { url: string; description?: string; mimeType?: string };
-  /** Untouched requirement chosen from the 402. */
-  requirements: PaymentRequirements;
+  /** Untouched requirement chosen from the 402 (a v1 entry when `x402Version` is 1). */
+  requirements: AnyPaymentRequirements;
   /** True when the server's facilitator will sponsor the one-time Permit2 approval. */
   gasSponsored: boolean;
 }
@@ -111,6 +121,14 @@ const ERC20_ABI = [
 ] as const;
 
 const SPONSORING_KEYS = ['eip2612GasSponsoring', 'erc20ApprovalGasSponsoring'];
+/** Signing window when a challenge omits `maxTimeoutSeconds` (matches radius-cli). */
+const DEFAULT_MAX_TIMEOUT_SECONDS = 600;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const ATOMIC_AMOUNT = /^[0-9]+$/;
+
+function sameOrigin(a: URL, b: URL): boolean {
+  return a.protocol === b.protocol && a.host === b.host;
+}
 
 function isSigner(v: unknown): v is ClientEvmSigner {
   return typeof v === 'object' && v !== null && 'address' in v && typeof (v as ClientEvmSigner).signTypedData === 'function';
@@ -161,8 +179,25 @@ export function createRadiusFetch(options: RadiusFetchOptions): RadiusFetch {
   // readContract on the signer lets @x402/evm sign the EIP-2612 permit for gas sponsoring.
   const signer = toClientEvmSigner(account, publicClient as never);
 
+  const exactScheme = new ExactEvmScheme(signer, { rpcUrl: network.rpcUrl });
+  // x402 v1 `exact` is EIP-3009 only. @x402/evm's own ExactEvmSchemeV1 resolves the chain id from a
+  // table of named v1 networks (base-sepolia, …) and rejects `eip155:<chainId>`, which is how Radius
+  // appears in v1 challenges. ExactEvmScheme's EIP-3009 signing is version-agnostic (same EIP-712
+  // domain/types, `validAfter: 0`), so delegate to it with the v1 price field normalised and wrap the
+  // result in the v1 envelope `{ x402Version, scheme, network, payload }`.
+  const exactV1Scheme: SchemeNetworkClient = {
+    scheme: 'exact',
+    async createPaymentPayload(x402Version, requirements) {
+      const v1 = requirements as unknown as PaymentRequirementsV1;
+      const { assetTransferMethod: _v2Only, ...extra } = v1.extra ?? {};
+      const result = await exactScheme.createPaymentPayload(x402Version, { ...v1, amount: v1.maxAmountRequired, extra } as PaymentRequirements);
+      return { x402Version, scheme: v1.scheme, network: v1.network, payload: result.payload } as PaymentPayloadResult;
+    },
+  };
   const client = new x402Client()
-    .register(network.network, new ExactEvmScheme(signer, { rpcUrl: network.rpcUrl }))
+    .register(network.network, exactScheme)
+    .register(network.network, new UptoEvmScheme(signer, { rpcUrl: network.rpcUrl }))
+    .registerV1(network.network, exactV1Scheme)
     // Backstop; the primary checks live in `chooseOffer` so errors are typed.
     .setSpendControls({
       maxAmountPerPayment: false,
@@ -197,51 +232,102 @@ export function createRadiusFetch(options: RadiusFetchOptions): RadiusFetch {
     return r;
   };
 
-  const chooseOffer = (pr: PaymentRequired): PaymentOffer => {
-    if (pr.x402Version !== 2) throw new RadiusPaymentError('invalid_challenge', `Unsupported x402 version ${pr.x402Version}`);
-    const accepts = pr.accepts ?? [];
+  const amountOf = (version: 1 | 2, a: AnyPaymentRequirements): bigint => {
+    const field = version === 1 ? 'maxAmountRequired' : 'amount';
+    const raw = (a as Record<string, unknown>)[field];
+    if (typeof raw !== 'string' || !ATOMIC_AMOUNT.test(raw)) {
+      throw new RadiusPaymentError('invalid_challenge', `Offer ${field} must be a non-negative integer string (got ${JSON.stringify(raw)})`, a);
+    }
+    return BigInt(raw);
+  };
+
+  const chooseOffer = (pr: PaymentRequired, requestUrl: string): PaymentOffer => {
+    const version = pr.x402Version;
+    if (version !== 1 && version !== 2) throw new RadiusPaymentError('invalid_challenge', `Unsupported x402 version ${String(version)}`);
+    const accepts = pr.accepts as AnyPaymentRequirements[] | undefined;
+    if (!Array.isArray(accepts) || accepts.length === 0) throw new RadiusPaymentError('invalid_challenge', 'Challenge has no accepts[]');
     const sameNetwork = accepts.filter((a) => a.network === network.network);
     if (sameNetwork.length === 0) {
       const offered = [...new Set(accepts.map((a) => a.network))].join(', ') || 'none';
       throw new RadiusPaymentError('network_mismatch', `Server accepts ${offered}; this client pays on ${network.network} (${network.name})`, accepts);
     }
-    const sameAsset = sameNetwork.filter((a) => a.asset.toLowerCase() === network.asset.address.toLowerCase() && a.scheme === 'exact');
+    const sameAsset = sameNetwork.filter((a) => typeof a.asset === 'string' && a.asset.toLowerCase() === network.asset.address.toLowerCase());
     if (sameAsset.length === 0) {
-      throw new RadiusPaymentError('asset_mismatch', `Server does not accept ${network.asset.symbol} (${network.asset.address}) with the exact scheme on ${network.network}`, sameNetwork);
+      throw new RadiusPaymentError('asset_mismatch', `Server does not accept ${network.asset.symbol} (${network.asset.address}) on ${network.network}`, sameNetwork);
     }
-    const supported = sameAsset.filter((a) => {
+    // `exact` exists in v1 and v2; `upto` is a v2 scheme only.
+    const knownScheme = sameAsset.filter((a) => a.scheme === 'exact' || (a.scheme === 'upto' && version === 2));
+    if (knownScheme.length === 0) {
+      const schemes = [...new Set(sameAsset.map((a) => `${a.scheme}@v${version}`))].join(', ');
+      throw new RadiusPaymentError('no_compatible_offer', `Server offers ${schemes} for ${network.asset.symbol}; this client supports exact@v1, exact@v2 (permit2 or eip3009) and upto@v2`, sameAsset);
+    }
+    // v1 `exact` is always EIP-3009 and `upto` always Permit2; v2 `exact` names its transfer method.
+    const supported = knownScheme.filter((a) => {
+      if (version === 1 || a.scheme === 'upto') return true;
       const m = a.extra?.assetTransferMethod;
       return m === undefined || m === 'permit2' || m === 'eip3009';
     });
     if (supported.length === 0) {
-      const methods = [...new Set(sameAsset.map((a) => String(a.extra?.assetTransferMethod)))].join(', ');
-      throw new RadiusPaymentError('unsupported_transfer_method', `Server requires assetTransferMethod ${methods}; this client supports permit2 and eip3009`, sameAsset);
+      const methods = [...new Set(knownScheme.map((a) => String(a.extra?.assetTransferMethod)))].join(', ');
+      throw new RadiusPaymentError('unsupported_transfer_method', `Server requires assetTransferMethod ${methods}; this client supports permit2 and eip3009`, knownScheme);
     }
-    const req = supported.reduce((a, b) => (BigInt(b.amount) < BigInt(a.amount) ? b : a));
-    const amount = BigInt(req.amount);
+    const priced = supported.map((req) => ({ req, amount: amountOf(version, req) }));
+    const { req, amount } = priced.reduce((a, b) => (b.amount < a.amount ? b : a));
+    const scheme = req.scheme as PaymentScheme;
     if (amount > cap) {
+      const offered = formatAmount(amount, network.asset.decimals, network.asset.symbol);
+      const limit = formatAmount(cap, network.asset.decimals, network.asset.symbol);
       throw new RadiusPaymentError(
         'price_above_limit',
-        `Offer ${formatAmount(amount, network.asset.decimals, network.asset.symbol)} exceeds maxPerRequest ${formatAmount(cap, network.asset.decimals, network.asset.symbol)}`,
+        scheme === 'upto' ? `Offer authorises up to ${offered}, exceeding maxPerRequest ${limit}` : `Offer ${offered} exceeds maxPerRequest ${limit}`,
         req,
       );
     }
+    if (scheme === 'upto') {
+      const facilitator = req.extra?.facilitatorAddress ?? req.extra?.facilitator;
+      if (typeof facilitator !== 'string' || !isAddress(facilitator)) {
+        throw new RadiusPaymentError('invalid_challenge', 'upto offer is missing a valid extra.facilitatorAddress; cannot bind the Permit2 witness', req);
+      }
+    }
     const gasSponsored = SPONSORING_KEYS.some((k) => pr.extensions !== undefined && k in pr.extensions);
+    // v1 has no top-level resource; its accepts[] carry description/mimeType.
+    const v1 = req as Partial<PaymentRequirementsV1>;
+    const resource = version === 2 && pr.resource ? pr.resource : { url: requestUrl, description: v1.description, mimeType: v1.mimeType };
     return {
-      amount: req.amount,
+      x402Version: version,
+      scheme,
+      amount: amount.toString(),
       amountFormatted: formatAmount(amount, network.asset.decimals, network.asset.symbol),
       asset: req.asset as Address,
       payTo: req.payTo as Address,
       network: req.network,
-      resource: pr.resource,
+      resource,
       requirements: req,
       gasSponsored,
     };
   };
 
+  /**
+   * The requirement handed to @x402/evm for signing. Fills in what the schemes need but a server may
+   * omit: the configured asset's EIP-712 domain (EIP-3009 / EIP-2612), a signing window, and the
+   * `extra.facilitator` alias radius-cli accepts for `facilitatorAddress`. Only the signer sees this;
+   * the untouched requirement is what gets echoed back to the server.
+   */
+  const forSigning = (offer: PaymentOffer): PaymentRequirements => {
+    const req = offer.requirements;
+    const extra: Record<string, unknown> = { name: network.asset.name, version: network.asset.version, ...req.extra };
+    if (extra.facilitatorAddress === undefined && typeof extra.facilitator === 'string') extra.facilitatorAddress = extra.facilitator;
+    const t = req.maxTimeoutSeconds;
+    return { ...req, maxTimeoutSeconds: typeof t === 'number' && t > 0 ? Math.floor(t) : DEFAULT_MAX_TIMEOUT_SECONDS, extra } as PaymentRequirements;
+  };
+
+  /** `upto` is always Permit2; v2 `exact` is Permit2 when the server says so; v1 `exact` is EIP-3009. */
+  const usesPermit2 = (offer: PaymentOffer): boolean =>
+    offer.scheme === 'upto' || (offer.x402Version === 2 && offer.requirements.extra?.assetTransferMethod === 'permit2');
+
   /** Permit2 needs an ERC-20 allowance. Sponsored: the scheme signs a permit. Unsponsored: approve on-chain once. */
   const ensureAllowance = async (offer: PaymentOffer): Promise<void> => {
-    if (offer.requirements.extra?.assetTransferMethod !== 'permit2' || offer.gasSponsored) return;
+    if (!usesPermit2(offer) || offer.gasSponsored) return;
     const current = await permit2Allowance();
     if (current >= BigInt(offer.amount)) return;
     const request: ApprovalRequest = { asset: network.asset.address, spender: PERMIT2_ADDRESS, amount: maxUint256, currentAllowance: current, offer };
@@ -254,42 +340,97 @@ export function createRadiusFetch(options: RadiusFetchOptions): RadiusFetch {
     await approvePermit2();
   };
 
+  /** v2: `PAYMENT-REQUIRED` header (or, off-spec but seen in the wild, a JSON body); v1: JSON body. */
+  const readChallenge = async (res: Response): Promise<PaymentRequired> => {
+    let body: unknown;
+    if (!res.headers.get('payment-required')) {
+      const text = await res.text();
+      if (text) body = JSON.parse(text);
+    }
+    try {
+      return httpClient.getPaymentRequiredResponse((n) => res.headers.get(n), body);
+    } catch (e) {
+      if (body && typeof body === 'object' && !Array.isArray(body) && (body as { x402Version?: unknown }).x402Version === 2) return body as PaymentRequired;
+      throw e;
+    }
+  };
+
+  /**
+   * Decode the settlement receipt. For `upto` the reported `amount` is untrusted input: it must be a
+   * non-negative integer no greater than the signed maximum, else `invalid_receipt`. `exact` receipts
+   * are decoded leniently (a malformed one just means no receipt).
+   */
+  const decodeReceipt = (header: string, offer: PaymentOffer): PaymentReceipt | undefined => {
+    let receipt: PaymentReceipt;
+    try {
+      receipt = decodePaymentReceipt(header, network);
+    } catch (e) {
+      if (offer.scheme === 'upto') throw new RadiusPaymentError('invalid_receipt', `Invalid upto payment response: ${(e as Error).message}`, e);
+      return undefined;
+    }
+    if (offer.scheme === 'upto' && receipt.amount !== undefined) {
+      try {
+        parseUptoSettlementAmount(receipt.amount, BigInt(offer.amount));
+      } catch (e) {
+        throw new RadiusPaymentError('invalid_receipt', `Invalid upto payment response: ${(e as Error).message}`, receipt);
+      }
+    }
+    // `exact` settles the offered amount; `upto` facilitators report what they charged (else assume the maximum).
+    if (receipt.success && receipt.amount === undefined) receipt.amount = offer.amount;
+    return receipt;
+  };
+
   const paidFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const request = new Request(input, init);
     if (request.headers.has('payment-signature') || request.headers.has('x-payment')) {
       return baseFetch(request);
     }
-    const retry = request.clone();
+    // The paid retry never follows redirects: a 3xx must not carry the payment header to another origin.
+    const retry = new Request(request.clone(), { redirect: 'manual' });
     const first = await baseFetch(request);
     if (first.status !== 402) return first;
 
     let paymentRequired: PaymentRequired;
     try {
-      let body: unknown;
-      try {
-        const text = await first.text();
-        if (text) body = JSON.parse(text);
-      } catch {
-        /* body optional */
-      }
-      paymentRequired = httpClient.getPaymentRequiredResponse((n) => first.headers.get(n), body);
+      paymentRequired = await readChallenge(first);
     } catch (e) {
       throw new RadiusPaymentError('invalid_challenge', `Could not parse the 402 challenge: ${(e as Error).message}`, e);
     }
 
-    const offer = chooseOffer(paymentRequired);
+    const offer = chooseOffer(paymentRequired, request.url);
     if (options.onPaymentRequired && !(await options.onPaymentRequired(offer))) {
       throw new RadiusPaymentError('declined', `Payment of ${offer.amountFormatted} to ${offer.payTo} declined`, offer);
     }
     await ensureAllowance(offer);
 
     // Narrow the challenge to the chosen offer so the upstream selector cannot pick another.
-    const narrowed: PaymentRequired = { ...paymentRequired, accepts: [offer.requirements] };
+    const narrowed: PaymentRequired = { ...paymentRequired, accepts: [forSigning(offer)] };
     const payload = await client.createPaymentPayload(narrowed);
+    // v2 servers match `accepted` against the requirement they sent (core fields equal, their `extra`
+    // a subset of ours), so echo it untouched rather than the filled-in signing copy.
+    if (payload.x402Version === 2) payload.accepted = offer.requirements as PaymentRequirements;
     for (const [k, v] of Object.entries(httpClient.encodePaymentSignatureHeader(payload))) retry.headers.set(k, v);
     retry.headers.set('Access-Control-Expose-Headers', 'PAYMENT-RESPONSE,X-PAYMENT-RESPONSE');
 
     const second = await baseFetch(retry);
+    if (REDIRECT_STATUSES.has(second.status)) {
+      const location = second.headers.get('location');
+      let target: URL | undefined;
+      try {
+        target = location ? new URL(location, retry.url) : undefined;
+      } catch {
+        /* malformed Location: refused below */
+      }
+      if (!target || !sameOrigin(target, new URL(retry.url))) {
+        throw new RadiusPaymentError(
+          'redirect_refused',
+          `Server redirected the paid request to ${location ?? '(no Location)'}; refusing to replay the payment header across origins`,
+          { status: second.status, location },
+        );
+      }
+      // Same-origin: handed back unfollowed. Re-requesting the target is the caller's call (it may cost another payment).
+      return second;
+    }
     const header = second.headers.get('payment-response') ?? second.headers.get('x-payment-response');
     if (second.status === 402) {
       let detail: unknown;
@@ -300,14 +441,14 @@ export function createRadiusFetch(options: RadiusFetchOptions): RadiusFetch {
       }
       throw new RadiusPaymentError('payment_rejected', `Server rejected the payment (${(detail as PaymentRequired | undefined)?.error ?? 'no reason given'})`, detail);
     }
-    if (header && options.onPaid) {
-      try {
-        const receipt = decodePaymentReceipt(header, network);
-        // `exact` settles the offered amount; facilitators need only report `amount` for `upto`-style schemes.
-        if (receipt.success && receipt.amount === undefined) receipt.amount = offer.amount;
-        await options.onPaid(receipt, offer);
-      } catch (e) {
-        console.error('radius-sdk onPaid hook failed:', e);
+    if (header) {
+      const receipt = decodeReceipt(header, offer);
+      if (receipt && options.onPaid) {
+        try {
+          await options.onPaid(receipt, offer);
+        } catch (e) {
+          console.error('radius-sdk onPaid hook failed:', e);
+        }
       }
     }
     return second;
@@ -362,7 +503,7 @@ export function createRadiusFetch(options: RadiusFetchOptions): RadiusFetch {
 
 export { getSettlement } from '../settlement.js';
 export type { Settlement, SettlementTransfer } from '../settlement.js';
-export { getPaymentReceipt, decodePaymentReceipt } from '../receipt.js';
+export { getPaymentReceipt, decodePaymentReceipt, parseUptoSettlementAmount } from '../receipt.js';
 export type { PaymentReceipt } from '../receipt.js';
 export { RadiusPaymentError } from '../errors.js';
 export { radiusEnv } from '../env.js';

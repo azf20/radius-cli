@@ -60,8 +60,19 @@ const receipt = getPaymentReceipt(res, payFetch.network);   // { success, transa
 ```
 
 - Pays only on the configured network and asset; anything else throws a `RadiusPaymentError`
-  with a `code` (`network_mismatch`, `asset_mismatch`, `price_above_limit`, `declined`,
-  `payment_rejected`, …) before anything is signed.
+  with a `code` (`network_mismatch`, `asset_mismatch`, `no_compatible_offer`, `price_above_limit`,
+  `declined`, `payment_rejected`, …) before anything is signed.
+- Schemes, a superset of what `radius-cli wallet x402` pays: x402 v2 `exact` (Permit2 or EIP-3009)
+  and `upto` (Permit2 via the x402UptoPermit2Proxy, witness bound to the facilitator address the
+  402 names), plus x402 v1 `exact` (EIP-3009, challenge in the JSON body, payment in `X-PAYMENT`).
+  The offer passed to `onPaymentRequired` says which (`offer.scheme`, `offer.x402Version`). For
+  `upto`, `offer.amount` and `maxPerRequest` are about the authorised maximum; the receipt carries
+  the amount actually charged, which is validated against the signed maximum (`invalid_receipt`
+  otherwise). The Radius facilitator does not advertise `upto` yet, so it is unit-tested only.
+- Redirects: the paid retry is sent with `redirect: 'manual'`. A 3xx to another origin throws
+  `redirect_refused` without following (the payment header is never replayed elsewhere); a
+  same-origin 3xx is returned as-is, unfollowed, so you decide whether to re-request (and pay
+  again). In browsers this surfaces as an opaque redirect response (status 0).
 - Permit2 approval handled either way: when the server's facilitator sponsors it
   (`eip2612GasSponsoring`), a wallet holding only SBC pays without any on-chain transaction; when
   it does not, the SDK sends one unlimited approval from the signer (`permit2Approval: 'auto'`,
@@ -118,6 +129,6 @@ self-hosted facilitator with your own auth or routing.
 | `examples/worker-seller` | Hono worker: free `/`, paid `/api/lookup` and `/api/query` (`npm run dev`) |
 | `examples/agent-buyer` | `buy.mjs` (pay a URL), `fresh-wallet.mjs` (gasless proof from a new wallet) |
 | `examples/demo-dapp` | Test-dapp style page exercising both sides in the browser (burner wallet or MetaMask) |
-| `test/` | unit tests (facilitator mocked); `test/e2e` real settlement on testnet or mainnet (`RADIUS_E2E=1 RADIUS_PRIVATE_KEY=… [RADIUS_NETWORK=mainnet] npm run test:e2e`) |
+| `test/` | unit tests (facilitator and RPC mocked; `client-parity.test.ts` pins the wire format against radius-cli's); `test/e2e` real settlement on testnet or mainnet (`RADIUS_E2E=1 RADIUS_PRIVATE_KEY=… [RADIUS_NETWORK=mainnet] npm run test:e2e`) |
 
 Built on `@x402/core` (server and client), `@x402/evm` (client signing only) and viem.

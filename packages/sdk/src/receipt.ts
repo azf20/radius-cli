@@ -20,9 +20,28 @@ export interface PaymentReceipt {
 }
 
 export const PAYMENT_RESPONSE_HEADER = 'payment-response';
+const ATOMIC_AMOUNT = /^[0-9]+$/;
+
+/**
+ * Validate the amount a facilitator reports for an `upto` payment. It is an untrusted receipt field:
+ * it must be a non-negative integer string and must not exceed the maximum the payer signed.
+ */
+export function parseUptoSettlementAmount(amount: string, maximum: bigint): bigint {
+  if (!ATOMIC_AMOUNT.test(amount)) {
+    throw new Error("payment response: 'amount' must be a non-negative integer string");
+  }
+  const settled = BigInt(amount);
+  if (settled > maximum) {
+    throw new Error(`payment response: settlement amount ${settled} exceeds authorized maximum ${maximum}`);
+  }
+  return settled;
+}
 
 export function decodePaymentReceipt(headerValue: string, network?: RadiusNetwork, expected?: { amount: string }): PaymentReceipt {
   const r = decodePaymentResponseHeader(headerValue) as Record<string, unknown>;
+  if (r.amount !== undefined && (typeof r.amount !== 'string' || !ATOMIC_AMOUNT.test(r.amount))) {
+    throw new Error("payment response: 'amount' must be a non-negative integer string");
+  }
   const transaction = typeof r.transaction === 'string' && r.transaction.length > 0 ? r.transaction : undefined;
   return {
     success: r.success === true,

@@ -259,10 +259,24 @@ Added later on 2026-09-11 (CLI parity pass, Adam's picks; keystore loader delibe
   fetch, pay-any-URL, reconcile, and an explanatory intro. Client now also accepts a viem
   WalletClient as signer (MetaMask). Page flow verified headlessly (jsdom) on testnet.
 
+Client parity with `radius-cli wallet x402` (so the CLI can later consume the SDK and drop its
+hand-rolled x402 code):
+- `upto`@v2 via upstream `UptoEvmScheme` (x402UptoPermit2Proxy spender, Witness `(to, facilitator,
+  validAfter)`, facilitator from `extra.facilitatorAddress`, string-serialised amounts). Receipt
+  `amount` validated like the CLI's `parseUptoSettlementAmount` (`invalid_receipt`). Unit-tested only:
+  the Radius facilitator does not advertise `upto` yet.
+- x402 v1 `exact` (EIP-3009, `X-PAYMENT`): upstream's `ExactEvmSchemeV1` only knows named v1 networks,
+  so a thin adapter feeds `ExactEvmScheme`'s EIP-3009 signer with `maxAmountRequired` and wraps the v1
+  envelope; the EIP-712 signing itself stays upstream.
+- Paid retry uses `redirect: 'manual'`; cross-origin 3xx → `redirect_refused`, same-origin returned as-is.
+- `test/client-parity.test.ts` ports the CLI's three x402 test files to wire level (header names,
+  payload shape, signatures recovered with viem). Known wire difference: the CLI trims `accepted.extra`
+  to `{name, version}`; the SDK echoes the full requirement, which is what `@x402/core` servers match on.
+
 Open next:
 - Deploy the example worker / demo for real (needs `wrangler login`) and re-run the buyer against it.
 - Cumulative budget helper (explicitly out of the SDK core per proposal; maybe a `budget` policy
   object with an injectable store for Workers KV/DO).
 - Native RUSD balance/transfer helpers (CLI has them; SDK is SBC-only).
-- `upto` scheme once the Radius facilitator advertises it.
+- Verify `upto` end-to-end once the Radius facilitator advertises it (client side is in place).
 - Feed the two quickstarts into `dev-docs/planning` tutorials once the team confirms the shape.
