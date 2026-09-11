@@ -81,11 +81,23 @@ const receipt = getPaymentReceipt(res, payFetch.network);   // { success, transa
 ## Networks and currency
 
 ```ts
-import { radiusMainnet, radiusTestnet, defineRadiusNetwork, resolveNetwork } from 'radius-sdk';
+import { radiusMainnet, radiusTestnet, radiusMainnetChain, radiusTestnetChain, defineRadiusNetwork, resolveNetwork } from 'radius-sdk';
+import { createPublicClient, http } from 'viem';
 
 resolveNetwork('testnet', { rpcUrl: 'https://rpc.testnet.radiustech.xyz/YOUR_KEY' });
 defineRadiusNetwork({ chainId: 4242, rpcUrl, facilitatorUrl, asset: { address: '0x…', symbol: 'USDX' } });
+defineRadiusNetwork({ chain: myViemChain, facilitatorUrl });   // or start from a viem Chain
+
+// Every RadiusNetwork carries its viem Chain; use it for your own viem clients.
+createPublicClient({ chain: radiusTestnet.chain, transport: http() });
 ```
+
+Chain identity lives in viem `Chain` objects: `radiusMainnetChain` (id 723487) and
+`radiusTestnetChain` (id 72344), native currency RUSD. A `RadiusNetwork` is one of those
+chains (`network.chain`, the source of truth) plus the Radius-specific `facilitatorUrl`,
+`faucetUrl` and `asset`; `chainId`, `network` (CAIP-2 `eip155:<id>`), `rpcUrl`, `explorerUrl`
+and `testnet` are derived from the chain. An `rpcUrl` override yields a network whose `chain`
+also uses that RPC.
 
 Both `radiusPayments` and `createRadiusFetch` accept `network`, plus `rpcUrl`, `facilitatorUrl`,
 and `asset` overrides. The asset defaults to SBC (6 decimals, permit domain "Stable Coin" v1);

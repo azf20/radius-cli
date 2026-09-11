@@ -1,7 +1,7 @@
 import { x402Client, x402HTTPClient } from '@x402/core/client';
 import type { PaymentRequired, PaymentRequirements } from '@x402/core/types';
 import { ExactEvmScheme, toClientEvmSigner, type ClientEvmSigner } from '@x402/evm';
-import { createPublicClient, createWalletClient, http, maxUint256, type Account, type Chain, type PublicClient, type WalletClient } from 'viem';
+import { createPublicClient, createWalletClient, http, maxUint256, type Account, type PublicClient, type WalletClient } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { formatAmount, resolvePrice, type Price } from '../amounts.js';
 import { RadiusPaymentError } from '../errors.js';
@@ -125,16 +125,6 @@ function isTxAccount(v: unknown): v is Account {
   return typeof v === 'object' && v !== null && typeof (v as Account).signTransaction === 'function';
 }
 
-function chainFor(network: RadiusNetwork): Chain {
-  return {
-    id: network.chainId,
-    name: `Radius ${network.name}`,
-    nativeCurrency: { name: 'Radius USD', symbol: 'RUSD', decimals: 18 },
-    rpcUrls: { default: { http: [network.rpcUrl] } },
-    testnet: network.testnet,
-  };
-}
-
 /**
  * Create a `fetch` that pays Radius x402 challenges automatically, within a
  * per-request ceiling, on one network, in one asset.
@@ -145,7 +135,7 @@ export function createRadiusFetch(options: RadiusFetchOptions): RadiusFetch {
     throw new RadiusPaymentError('config', 'createRadiusFetch: maxPerRequest is required (e.g. "$0.05")');
   }
   const cap = BigInt(resolvePrice(options.maxPerRequest, network.asset).amount);
-  const chain = chainFor(network);
+  const chain = network.chain;
   const publicClient: PublicClient = createPublicClient({ chain, transport: http(network.rpcUrl) });
   let account: ClientEvmSigner;
   let walletClient: WalletClient | undefined;

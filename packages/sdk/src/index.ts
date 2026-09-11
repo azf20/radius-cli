@@ -4,6 +4,8 @@ export {
   X402_EXACT_PERMIT2_PROXY,
   radiusMainnet,
   radiusTestnet,
+  radiusMainnetChain,
+  radiusTestnetChain,
   defineRadiusNetwork,
   resolveNetwork,
   chainIdFromCaip2,
@@ -18,6 +20,8 @@ export type {
   NetworkInput,
   NetworkOverrides,
   CustomNetworkConfig,
+  CustomNetworkFromChain,
+  CustomNetworkFromChainId,
 } from './networks.js';
 export { toAtomic, formatAmount, resolvePrice } from './amounts.js';
 export type { Price } from './amounts.js';

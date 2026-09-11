@@ -30,7 +30,7 @@ const TRANSFER = parseAbiItem('event Transfer(address indexed from, address inde
  * Use it to reconcile a timed-out payment before authorising another charge.
  */
 export async function getSettlement(network: RadiusNetwork, txHash: `0x${string}`, client?: PublicClient): Promise<Settlement | undefined> {
-  const pc = client ?? createPublicClient({ transport: http(network.rpcUrl) });
+  const pc = client ?? createPublicClient({ chain: network.chain, transport: http(network.rpcUrl) });
   let receipt;
   try {
     receipt = await pc.getTransactionReceipt({ hash: txHash });

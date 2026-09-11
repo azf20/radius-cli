@@ -116,8 +116,8 @@ $('w-send').onclick = (ev) => run('w-result', ev.target as HTMLButtonElement, as
 /** Connect the injected wallet. `silent` only reuses an existing authorisation (no prompt), for page load. */
 async function connectMetaMask(silent = false) {
   if (!window.ethereum) throw new Error('No injected wallet found (window.ethereum)');
-  const net = network();
-  const chain = { id: net.chainId, name: `Radius ${net.name}`, nativeCurrency: { name: 'Radius USD', symbol: 'RUSD', decimals: 18 }, rpcUrls: { default: { http: [net.rpcUrl] } }, blockExplorers: net.explorerUrl ? { default: { name: 'Radius', url: net.explorerUrl } } : undefined };
+  // The SDK network carries its viem Chain (id, RPC, explorer); MetaMask gets that definition via addChain.
+  const chain = network().chain;
   const accounts = (await window.ethereum.request({ method: silent ? 'eth_accounts' : 'eth_requestAccounts' })) as `0x${string}`[];
   if (!accounts.length) throw new Error(silent ? 'MetaMask not authorised for this site yet; click Connect MetaMask' : 'No account returned');
   const wc = createWalletClient({ account: accounts[0], chain, transport: custom(window.ethereum) });

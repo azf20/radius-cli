@@ -4,13 +4,13 @@
 import { createPublicClient, createWalletClient, http, parseAbi } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { createRadiusFetch, getPaymentReceipt } from 'radius-sdk/client';
-import { SBC, formatAmount, radiusTestnet } from 'radius-sdk';
+import { PERMIT2_ADDRESS, SBC, formatAmount, radiusTestnet } from 'radius-sdk';
 
 const url = process.argv[2] ?? 'http://localhost:8787/api/lookup?ip=9.9.9.9';
 const funder = privateKeyToAccount(process.env.RADIUS_PRIVATE_KEY);
 const freshKey = generatePrivateKey();
 const fresh = privateKeyToAccount(freshKey);
-const chain = { id: radiusTestnet.chainId, name: 'Radius Testnet', nativeCurrency: { name: 'RUSD', symbol: 'RUSD', decimals: 18 }, rpcUrls: { default: { http: [radiusTestnet.rpcUrl] } } };
+const chain = radiusTestnet.chain;   // the SDK network's viem Chain (id, RPC, explorer)
 const pub = createPublicClient({ chain, transport: http() });
 const wallet = createWalletClient({ chain, transport: http(), account: funder });
 const erc20 = parseAbi(['function transfer(address to, uint256 amount) returns (bool)', 'function balanceOf(address) view returns (uint256)', 'function allowance(address,address) view returns (uint256)']);
@@ -19,7 +19,7 @@ console.error(`fresh wallet ${fresh.address}; funding 0.005 SBC from ${funder.ad
 const hash = await wallet.writeContract({ address: SBC.address, abi: erc20, functionName: 'transfer', args: [fresh.address, 5000n] });
 await pub.waitForTransactionReceipt({ hash });
 const before = await pub.readContract({ address: SBC.address, abi: erc20, functionName: 'balanceOf', args: [fresh.address] });
-const allowance = await pub.readContract({ address: SBC.address, abi: erc20, functionName: 'allowance', args: [fresh.address, '0x000000000022D473030F116dDEE9F6B43aC78BA3'] });
+const allowance = await pub.readContract({ address: SBC.address, abi: erc20, functionName: 'allowance', args: [fresh.address, PERMIT2_ADDRESS] });
 const native = await pub.getBalance({ address: fresh.address });
 console.error(`before: SBC ${formatAmount(before, 6)}, Permit2 allowance ${allowance}, eth_getBalance ${native}`);
 
@@ -30,5 +30,5 @@ console.log(await res.text());
 console.error('receipt:', getPaymentReceipt(res, payFetch.network));
 
 const after = await pub.readContract({ address: SBC.address, abi: erc20, functionName: 'balanceOf', args: [fresh.address] });
-const allowanceAfter = await pub.readContract({ address: SBC.address, abi: erc20, functionName: 'allowance', args: [fresh.address, '0x000000000022D473030F116dDEE9F6B43aC78BA3'] });
+const allowanceAfter = await pub.readContract({ address: SBC.address, abi: erc20, functionName: 'allowance', args: [fresh.address, PERMIT2_ADDRESS] });
 console.error(`after: SBC ${formatAmount(after, 6)} (spent ${formatAmount(before - after, 6)}), Permit2 allowance ${allowanceAfter === (2n ** 256n - 1n) ? 'MaxUint256' : allowanceAfter}`);

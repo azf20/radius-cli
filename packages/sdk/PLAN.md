@@ -73,23 +73,25 @@ One package, ESM, subpath exports so servers never pull the signing code:
 ### Networks and defaults
 
 ```ts
-import { radiusTestnet, radiusMainnet, defineRadiusNetwork, resolveNetwork } from 'radius-sdk';
+import { radiusTestnet, radiusMainnet, radiusTestnetChain, radiusMainnetChain, defineRadiusNetwork, resolveNetwork } from 'radius-sdk';
 
 interface RadiusNetwork {
   name: 'testnet' | 'mainnet' | string;
-  chainId: number;               // 72344 | 723487
-  network: `eip155:${number}`;   // CAIP-2, what x402 uses
-  rpcUrl: string;
+  chain: Chain;                  // viem Chain: the source of truth (radiusMainnetChain / radiusTestnetChain)
+  chainId: number;               // derived: chain.id (72344 | 723487)
+  network: `eip155:${number}`;   // derived: CAIP-2, what x402 uses
+  rpcUrl: string;                // derived: chain.rpcUrls.default.http[0]
   facilitatorUrl: string;
-  explorerUrl?: string;
+  explorerUrl?: string;          // derived: chain.blockExplorers.default.url
   asset: { address: `0x${string}`; symbol: 'SBC'; decimals: 6; name: 'Stable Coin'; version: '1' };
-  testnet: boolean;
+  testnet: boolean;              // derived: chain.testnet ?? false
 }
 
 // 'testnet' | 'mainnet' | RadiusNetwork | partial override
 resolveNetwork('testnet');
-resolveNetwork({ ...radiusTestnet, rpcUrl: 'https://rpc.testnet.radiustech.xyz/KEY' });
+resolveNetwork('testnet', { rpcUrl: 'https://rpc.testnet.radiustech.xyz/KEY' });  // chain carries the override too
 defineRadiusNetwork({ chainId: 9999, rpcUrl, facilitatorUrl, asset: {...} }); // custom instance
+defineRadiusNetwork({ chain: myViemChain, facilitatorUrl });                   // or from a viem Chain
 ```
 
 Default currency is SBC everywhere. Prices are USD strings (`"$0.01"` or `"0.01"`)
