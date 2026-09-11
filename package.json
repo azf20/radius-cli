@@ -10,9 +10,9 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "pnpm -r run build",
-    "test": "pnpm -r run test",
-    "typecheck": "pnpm -r run typecheck"
+    "build": "pnpm --filter './packages/*' run build",
+    "test": "pnpm --filter './packages/*' run test",
+    "typecheck": "pnpm --filter './packages/*' run typecheck"
   },
   "packageManager": "pnpm@10.34.5",
   "pnpm": {
