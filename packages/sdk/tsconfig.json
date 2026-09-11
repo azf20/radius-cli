@@ -9,6 +9,8 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
+    "composite": true,
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
     "outDir": "dist",
     "rootDir": "src",
     "skipLibCheck": true,

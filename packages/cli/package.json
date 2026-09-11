@@ -8,6 +8,7 @@
   },
   "files": [
     "dist",
+    "!dist/.tsbuildinfo",
     "README.md",
     "LICENSE"
   ],
@@ -15,10 +16,11 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc -p . && chmod +x dist/index.js",
+    "build": "tsc -b . && chmod +x dist/index.js",
     "dev": "tsc -p . --watch",
     "test": "vitest run",
-    "prepublishOnly": "pnpm run build"
+    "typecheck": "tsc -b .",
+    "prepublishOnly": "node scripts/prepublish.mjs && pnpm run build"
   },
   "keywords": [
     "radius",
@@ -45,6 +47,7 @@
     "@inquirer/prompts": "^7.0.0",
     "commander": "^12.1.0",
     "ethers": "^6.13.0",
+    "radius-sdk": "workspace:^",
     "viem": "^2.21.0"
   },
   "devDependencies": {

@@ -17,6 +17,6 @@ pnpm --filter radius-cli build        # one package
 node packages/cli/dist/index.js --help
 ```
 
-Requires Node ≥ 20 and pnpm 10 (`corepack enable pnpm`). Every PR that changes `packages/cli` or `packages/sdk` adds a [changeset](.changeset/README.md) (`pnpm changeset`); a GitHub check enforces it. `pnpm version-packages` turns pending changesets into version bumps and changelogs, `pnpm release` publishes in dependency order.
+Requires Node ≥ 20 and pnpm 10 (`corepack enable pnpm`). `pnpm build` / `pnpm test` / `pnpm typecheck` at the root run every package in dependency order. Building or typechecking the CLI on its own also works from a fresh clone: `packages/cli` is a TypeScript project reference to `packages/sdk`, so `tsc -b` rebuilds the SDK whenever its source is newer than its `dist`; the CLI's tests read the SDK from source.
 
-Each package publishes independently from its own directory (`pnpm publish` inside `packages/<name>`).
+Every PR that changes `packages/cli` or `packages/sdk` adds a [changeset](.changeset/README.md) (`pnpm changeset`); a GitHub check enforces it. `pnpm version-packages` turns pending changesets into version bumps and changelogs (bumping `radius-cli` whenever `radius-sdk` moves, since its `workspace:^` range pins the exact 0.0.x version), `pnpm release` publishes in dependency order, SDK first. Each package can also publish from its own directory (`pnpm publish` inside `packages/<name>`); the CLI's `prepublishOnly` refuses to publish until the SDK version it depends on is on npm.

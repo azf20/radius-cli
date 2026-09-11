@@ -23,6 +23,9 @@ importers:
       ethers:
         specifier: ^6.13.0
         version: 6.17.0
+      radius-sdk:
+        specifier: workspace:^
+        version: link:../sdk
       viem:
         specifier: ^2.21.0
         version: 2.56.5(typescript@5.9.3)(zod@3.25.76)
