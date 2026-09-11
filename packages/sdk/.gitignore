@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+.env
+*.log
+examples/*/node_modules/
+examples/*/.wrangler/
+examples/demo-dapp/public/app.js
+examples/demo-dapp/public/app.js.map
