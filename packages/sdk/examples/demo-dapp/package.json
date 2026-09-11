@@ -1,0 +1,21 @@
+{
+  "name": "radius-demo-dapp",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:web": "esbuild web/app.ts --bundle --format=esm --platform=browser --target=es2022 --minify --sourcemap --outfile=public/app.js",
+    "dev": "npm run build:web && wrangler dev",
+    "deploy": "npm run build:web && wrangler deploy",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.web.json"
+  },
+  "dependencies": {
+    "hono": "^4.13.7",
+    "radius-sdk": "file:../.."
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260910.1",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.0",
+    "wrangler": "^4.131.0"
+  }
+}

@@ -5,6 +5,7 @@ Tools for the [Radius Network](https://radiustech.xyz), managed as one npm works
 | Package | What |
 | --- | --- |
 | [`packages/cli`](./packages/cli) | `radius-cli` — CLI wallet for Radius, modeled on Foundry's `cast` |
+| [`packages/sdk`](./packages/sdk) | `radius-sdk` — accept and make Radius payments over x402 v2 (Hono / Cloudflare Workers first) |
 
 ## Development
 

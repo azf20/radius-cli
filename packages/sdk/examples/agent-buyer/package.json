@@ -1,0 +1,13 @@
+{
+  "name": "radius-agent-buyer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "buy": "node buy.mjs"
+  },
+  "dependencies": {
+    "hono": "^4.13.7",
+    "radius-sdk": "file:../..",
+    "viem": "^2.48.11"
+  }
+}

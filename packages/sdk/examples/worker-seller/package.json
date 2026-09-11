@@ -1,0 +1,19 @@
+{
+  "name": "radius-worker-seller",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.13.7",
+    "radius-sdk": "file:../.."
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260910.1",
+    "typescript": "^5.9.0",
+    "wrangler": "^4.131.0"
+  }
+}
