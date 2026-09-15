@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 export const SUPPORTED_VERBS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'] as const;
 export type HttpVerb = typeof SUPPORTED_VERBS[number];
 
-const FORBIDDEN_REQUEST_HEADERS = new Set(['host', 'x-payment']);
+// Payment headers are set by the SDK on the paid retry; never let a caller supply stale ones.
+const FORBIDDEN_REQUEST_HEADERS = new Set(['host', 'x-payment', 'payment-signature']);
 const MAX_RESPONSE_BYTES = 25 * 1024 * 1024;
 
 export interface HttpResponse {
@@ -76,7 +77,7 @@ export async function runRequest(
   };
 }
 
-async function readCappedBody(res: Response): Promise<Uint8Array> {
+export async function readCappedBody(res: Response): Promise<Uint8Array> {
   if (!res.body) {
     const ab = await res.arrayBuffer();
     if (ab.byteLength > MAX_RESPONSE_BYTES) {
