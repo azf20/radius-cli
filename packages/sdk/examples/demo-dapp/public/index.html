@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Radius SDK demo</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1a1d21; --muted:#5f6b7a; --line:#e3e6ea; --accent:#2f6fed; --ok:#1a8f4a; --bad:#c62828; --warn:#b26a00; }
+  * { box-sizing: border-box; }
+  body { margin:0; font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color:var(--ink); background:var(--bg); }
+  header { background:var(--card); border-bottom:1px solid var(--line); padding:14px 20px; display:flex; flex-wrap:wrap; gap:14px 24px; align-items:center; }
+  header h1 { font-size:18px; margin:0 12px 0 0; }
+  header label { color:var(--muted); display:flex; gap:6px; align-items:center; }
+  #status { margin-left:auto; color:var(--muted); }
+  main { max-width:1180px; margin:0 auto; padding:18px 20px 60px; display:grid; grid-template-columns:repeat(auto-fit, minmax(340px, 1fr)); gap:16px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; display:flex; flex-direction:column; gap:10px; }
+  section.wide { grid-column: 1 / -1; }
+  h2 { font-size:15px; margin:0; display:flex; align-items:center; gap:8px; }
+  h2 .tag { font-size:11px; font-weight:600; color:var(--accent); background:#e8effd; padding:2px 8px; border-radius:99px; }
+  p.hint { margin:0; color:var(--muted); }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .kv { display:grid; grid-template-columns:max-content 1fr; gap:4px 12px; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12.5px; }
+  .kv b { font-weight:600; color:var(--muted); font-family:inherit; }
+  button { font:inherit; padding:6px 12px; border:1px solid var(--line); border-radius:7px; background:#fff; cursor:pointer; }
+  button:hover { border-color:#b9c2cf; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  input, select, textarea { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:7px; background:#fff; }
+  input.mono, textarea { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12.5px; }
+  input.addr { width:100%; }
+  pre.result { margin:0; background:#0f172a; color:#e2e8f0; padding:10px 12px; border-radius:8px; font-size:12px; overflow:auto; max-height:260px; white-space:pre-wrap; word-break:break-all; min-height:38px; }
+  pre.result:empty::before { content:'Result: —'; color:#94a3b8; }
+  .route { display:grid; grid-template-columns:1fr auto auto; gap:8px; align-items:center; padding:8px 0; border-top:1px solid var(--line); }
+  .route code { font-size:12.5px; }
+  .route .price { color:var(--muted); font-size:12px; }
+  #log { max-height:320px; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); }
+  a { color:var(--accent); }
+  .intro p { margin:4px 0; }
+  .intro h3 { font-size:14px; margin:8px 0 4px; }
+  .cols { display:grid; grid-template-columns:repeat(auto-fit, minmax(420px, 1fr)); gap:16px; }
+  pre.code { margin:6px 0 0; background:#f1f3f6; border:1px solid var(--line); padding:10px 12px; border-radius:8px; font-size:12px; overflow:auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Radius SDK demo</h1>
+  <label>Network <select id="network"><option value="testnet">testnet</option><option value="mainnet">mainnet</option></select></label>
+  <label>Signer <select id="signerMode"><option value="burner">burner wallet (in this browser)</option><option value="metamask">MetaMask / injected</option></select></label>
+  <span id="status">loading…</span>
+</header>
+<main>
+  <section class="wide intro">
+    <h2>What this shows</h2>
+    <p><strong>radius-sdk</strong> makes an HTTP endpoint chargeable, and makes a client (a person, a script, or an agent) able to pay for it, using the open
+      <a href="https://x402.org" target="_blank" rel="noreferrer">x402 v2</a> protocol with settlement on Radius in SBC. Nothing Radius-specific travels on the wire,
+      so any x402-capable client can pay a radius-sdk endpoint, and radius-sdk clients can pay any x402 v2 endpoint on Radius.</p>
+    <div class="cols">
+      <div>
+        <h3>Seller side: this worker</h3>
+        <p>The endpoints in the <em>paid endpoints</em> card are protected by one Hono middleware. A request without payment gets a <code>402</code> with a
+          <code>PAYMENT-REQUIRED</code> header describing the price. A request carrying a signed <code>PAYMENT-SIGNATURE</code> is verified and settled
+          on Radius through the Radius facilitator <em>before</em> the handler runs, and the response carries a <code>PAYMENT-RESPONSE</code> receipt.</p>
+<pre class="code">import { radiusPayments } from 'radius-sdk/hono';
+
+app.use('/api/*', radiusPayments({
+  network: 'testnet',
+  payTo: (c) =&gt; c.env.PAY_TO,
+  routes: {
+    'GET /api/quote':  { price: '$0.001', description: 'A quote' },
+    'POST /api/echo':  '$0.01',
+  },
+}));
+app.get('/api/quote', (c) =&gt; c.json({ …, paidBy: c.get('radiusPayment')?.payer }));</pre>
+      </div>
+      <div>
+        <h3>Buyer side: this page</h3>
+        <p>Every "Pay &amp; fetch" button is a <code>fetch</code> wrapped by <code>createRadiusFetch</code>. It sees the 402, checks the offer against your
+          per-request ceiling and network, signs a Permit2 transfer (plus a gasless EIP-2612 permit when the facilitator sponsors approvals, or one on-chain
+          approval when it does not), retries, and hands you the response with a decoded receipt.</p>
+<pre class="code">import { createRadiusFetch, getPaymentReceipt } from 'radius-sdk/client';
+
+const payFetch = createRadiusFetch({
+  network: 'testnet',
+  signer: privateKey,          // or a viem account / MetaMask WalletClient
+  maxPerRequest: '$0.01',      // hard ceiling, not a budget
+  onPaymentRequired: (offer) =&gt; confirm(`Pay ${offer.amountFormatted}?`),
+});
+const res = await payFetch('/api/quote');
+const receipt = getPaymentReceipt(res);   // { transaction, payer, amount, explorerUrl }</pre>
+      </div>
+    </div>
+    <p class="hint">Try it: <b>1</b> Faucet drip into the burner wallet (testnet gives ~0.5 SBC) → <b>2</b> "Fetch unpaid" on a route to see the raw 402 →
+      <b>3</b> "Pay &amp; fetch" and follow the explorer link in the receipt → <b>4</b> try <code>/api/premium</code> to see the ceiling refuse a $5 offer →
+      <b>5</b> paste the transaction hash into <em>Reconcile</em>. Toggle the client settings to see declines and approval vetoes.</p>
+  </section>
+
+  <section>
+    <h2>Wallet <span class="tag">buyer</span></h2>
+    <p class="hint">The burner key, your signer choice and network persist in this browser's localStorage (per origin, so localhost and a proxied URL each have their own). Use <em>Show key</em> / <em>Import key</em> to move a wallet between browsers.</p>
+    <div class="kv">
+      <b>address</b><span id="w-address">—</span>
+      <b>balance</b><span id="w-balance">—</span>
+      <b>Permit2 allowance</b><span id="w-allowance">—</span>
+    </div>
+    <div class="row">
+      <button id="w-refresh">Refresh</button>
+      <button id="w-connect">Connect MetaMask</button>
+      <button id="w-new">New burner</button>
+      <button id="w-import">Import key</button>
+      <button id="w-export">Show key</button>
+    </div>
+    <div class="row">
+      <button id="w-fund" class="primary">Faucet drip</button>
+      <button id="w-approve">Approve Permit2</button>
+    </div>
+    <div class="row">
+      <input id="w-sendTo" class="mono addr" placeholder="send to 0x…">
+      <input id="w-sendAmt" class="mono" value="$0.001" size="8">
+      <button id="w-send">Send</button>
+    </div>
+    <pre class="result" id="w-result"></pre>
+  </section>
+
+  <section>
+    <h2>Client settings <span class="tag">buyer</span></h2>
+    <div class="row">
+      <label>maxPerRequest <input id="c-max" class="mono" value="$0.01" size="8"></label>
+    </div>
+    <label><input type="checkbox" id="c-decline"> decline every offer in <code>onPaymentRequired</code></label>
+    <label><input type="checkbox" id="c-vetoApproval"> veto Permit2 approvals in <code>onApprovalRequired</code></label>
+    <label><input type="checkbox" id="c-neverApprove"> <code>permit2Approval: 'never'</code></label>
+    <p class="hint">Every paid request below is one <code>createRadiusFetch(...)</code> call configured from these fields.</p>
+  </section>
+
+  <section class="wide">
+    <h2>This worker's paid endpoints <span class="tag">seller</span></h2>
+    <div class="kv" id="s-info"><b>server</b><span>loading…</span></div>
+    <div id="s-routes"></div>
+    <pre class="result" id="s-result"></pre>
+  </section>
+
+  <section>
+    <h2>Pay any URL <span class="tag">buyer</span></h2>
+    <div class="row">
+      <select id="u-method"><option>GET</option><option>POST</option></select>
+      <input id="u-url" class="mono addr" placeholder="https://… (x402 v2 endpoint on this network)">
+    </div>
+    <textarea id="u-body" rows="2" placeholder='POST body (JSON), optional'></textarea>
+    <div class="row"><button id="u-go" class="primary">Pay &amp; fetch</button><button id="u-plain">Fetch without paying</button></div>
+    <pre class="result" id="u-result"></pre>
+  </section>
+
+  <section>
+    <h2>Reconcile a settlement <span class="tag">either side</span></h2>
+    <p class="hint"><code>getSettlement(txHash)</code> reads the receipt and the asset's Transfer logs.</p>
+    <div class="row"><input id="r-hash" class="mono addr" placeholder="0x… transaction hash"><button id="r-go">Look up</button></div>
+    <pre class="result" id="r-result"></pre>
+  </section>
+
+  <section class="wide">
+    <h2>Log</h2>
+    <pre class="result" id="log"></pre>
+  </section>
+</main>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

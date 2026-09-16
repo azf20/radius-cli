@@ -1,0 +1,11 @@
+name = "radius-demo-dapp"
+main = "src/worker.ts"
+compatibility_date = "2026-09-01"
+
+[assets]
+directory = "./public"
+
+[vars]
+RADIUS_NETWORK = "testnet"
+# Recipient of demo payments. Override with `wrangler secret put PAY_TO` or .dev.vars.
+PAY_TO = "0x1eF420190c299D4d133fE9227F780D7d5cE91BeE"
