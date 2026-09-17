@@ -5,6 +5,7 @@
     "moduleResolution": "Bundler",
     "outDir": "dist",
     "rootDir": "src",
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -18,5 +19,6 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": false
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*"],
+  "references": [{ "path": "../sdk/tsconfig.build.json" }]
 }
