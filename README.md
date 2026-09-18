@@ -1,177 +1,19 @@
-# radius-cli
+# radius
 
-A CLI wallet for the [Radius Network](https://radiustech.xyz) — modeled on Foundry's `cast`, with a built-in account stored in `~/.radius/keystore.json`.
+Tools for the [Radius Network](https://radiustech.xyz), managed as one pnpm workspace.
 
-```bash
-npx radius-cli wallet new
-npx radius-cli wallet address
-npx radius-cli wallet balance
-npx radius-cli wallet send 0xRecipient 0.10 RUSD
-npx radius-cli call 0xToken "balanceOf(address)(uint256)" 0xUser
-```
-
-## Install
-
-```bash
-# One-off invocation
-npx radius-cli <command>
-
-# Or install globally — the binary on $PATH is `radius-cli`
-npm install -g radius-cli
-radius-cli wallet address
-```
-
-Requires Node ≥ 20.
-
-## Networks
-
-| Network | Chain ID | Default RPC |
-|---|---|---|
-| `mainnet` *(default)* | 723487 | `https://rpc.radiustech.xyz` |
-| `testnet` | 72344 | `https://rpc.testnet.radiustech.xyz` |
-
-Override the URL with `--rpc-url` or `RADIUS_RPC_URL` if you want to point at a different endpoint.
-
-## Wallet
-
-On first use, any account-needing command (`wallet address`, `balance`, `sign`, `send`, …) auto-creates a keystore at `~/.radius/keystore.json` with no password set (file mode `0o600`). To opt into a password, run `radius-cli wallet new --force` (or set `RADIUS_PASSWORD` before the first command). The keystore is Web3 Secret Storage v3 — compatible with geth/foundry. The address is cached in `~/.radius/config.json` so `radius-cli wallet address` is a cheap read.
-
-```bash
-radius-cli wallet new
-radius-cli wallet import 0xPRIVATE_KEY
-radius-cli wallet address
-radius-cli wallet balance [0xAddr]
-radius-cli wallet export                           # decrypts and prints the private key
-radius-cli wallet sign "hello"                     # EIP-191 personal_sign — prints 0x signature
-radius-cli wallet sign --raw 0xdeadbeef            # sign raw hex bytes
-echo -n "msg" | radius-cli wallet sign -           # read message from stdin
-radius-cli wallet verify "hello" 0xSig             # verify against own address
-radius-cli wallet verify "hello" 0xSig --address 0xOther
-radius-cli wallet send 0xTo 0.10 RUSD              # native value transfer
-radius-cli wallet send 0xTo 0.10 SBC               # ERC-20 transfer of SBC
-radius-cli wallet send 0xToken "transfer(address,uint256)" 0xTo 100   # arbitrary call
-```
-
-`--private-key 0xHEX` overrides the keystore on any command.
-
-## x402 HTTP payments
-
-Make an HTTP request and, if the server responds with `402 Payment Required` and an [x402](https://x402.org) challenge, pay it from the local wallet and retry.
-
-```bash
-radius-cli wallet x402 get https://example.com/protected
-radius-cli wallet x402 post https://api.example.com/x -d '{"a":1}' -H 'Authorization: Bearer …'
-radius-cli wallet x402 get https://example.com/r --x402-threshold 0.05    # auto-pay up to 0.05 of the asset
-radius-cli wallet x402 get https://example.com/r -y                       # auto-pay any amount
-radius-cli wallet x402 get https://example.com/r --json                   # envelope with status/headers/body/payment
-```
-
-Verbs: `get`, `post`, `put`, `patch`, `delete`, `head`, `options`.
-
-`-d, --data` accepts a literal string, `-d @path` to read from a file, or `-d -` to read from stdin. JSON-shaped bodies default to `Content-Type: application/json` unless one is set with `-H`.
-
-`--x402-threshold <decimal>` is in the asset's display units (e.g. `0.05` means 0.05 SBC, which is $0.05 since SBC is USD-pegged). When the offered fee is at or below the threshold, the request pays without prompting — designed for AI agents and other non-interactive use. For the `upto` scheme the threshold is compared against the authorized maximum. With no threshold and no TTY, the command refuses (exit 2) rather than hang.
-
-Both x402 v1 and v2 are supported, selected automatically from the server's advertised `x402Version`:
-
-- **`exact`** — a fixed price. v1 and v2 support EIP-3009 `transferWithAuthorization`; v2 also supports any ERC-20 advertised with `assetTransferMethod: "permit2"`, signing a Uniswap Permit2 `permitWitnessTransferFrom` authorization through `x402ExactPermit2Proxy`.
-- **`upto`** (v2, Uniswap Permit2 `permitWitnessTransferFrom` via the `x402UptoPermit2Proxy`) — the client signs a Permit2 authorization up to a maximum and the facilitator settles the actual usage (which may be less, or zero).
-
-Permit2 payments require an ERC-20 approval for the canonical Permit2 contract. Pass `--x402-approve-permit2` (or `-y`) to submit the approval automatically; otherwise the CLI prompts. The approval is unlimited and one-time, matching the x402 spec's "one-time gas approval" model: subsequent Permit2 payments need no further approval transactions, and each payment is still individually authorized by a signed Permit2 message capped to that payment's amount.
-
-Body goes to stdout; payment confirmation and (optionally, with `--include`) headers go to stderr — pipeable.
-
-## Read commands
-
-```bash
-radius-cli call 0xToken "balanceOf(address)(uint256)" 0xUser   # decoded result
-radius-cli tx 0xTransactionHash
-radius-cli receipt 0xTransactionHash
-radius-cli storage 0xContract 0
-radius-cli code 0xContract
-radius-cli nonce 0xAddress
-```
-
-Function signatures use `cast` syntax: `name(args)` for state-changing calls, `name(args)(returns)` for read calls (the result is decoded against the return types).
-
-## JSON output
-
-Pass `--json` to any command to emit machine-readable JSON on stdout (one object per command, pretty-printed). Useful for piping into `jq` or driving the CLI from scripts and agents. Bigints are serialized as decimal strings.
-
-```bash
-$ radius-cli --json wallet address
-{
-  "address": "0x4F2D8a3b1c0E5d9b8e7a6c5d4e3f2a1b0c9d8e7f"
-}
-
-$ radius-cli --json wallet balance 0x4F2D8a3b1c0E5d9b8e7a6c5d4e3f2a1b0c9d8e7f
-{
-  "address": "0x4F2D8a3b1c0E5d9b8e7a6c5d4e3f2a1b0c9d8e7f",
-  "totalUsd": 12.345678,
-  "sbc": "10.000000",
-  "rusd": "2.345678",
-  "sbcWei": "10000000",
-  "rusdWei": "2345678000000000000",
-  "sbcError": null
-}
-
-$ radius-cli --json wallet send 0xRecipient 0.10 RUSD | jq -r .hash
-0xabc…
-
-$ radius-cli --json call 0xToken "balanceOf(address)(uint256)" 0xUser
-"42000000"
-
-$ radius-cli --json nonce 0xAddress
-{
-  "address": "0xAddress",
-  "nonce": 17
-}
-```
-
-Per-command JSON shapes:
-
-| Command | JSON shape |
-|---|---|
-| `wallet new` / `wallet import` | `{path, address}` |
-| `wallet address` | `{address}` |
-| `wallet export` | `{address, privateKey}` |
-| `wallet sign` | `{address, signature}` |
-| `wallet verify` | `{address, valid}` (exit 1 when invalid) |
-| `wallet balance` | `{address, totalUsd, sbc, rusd, sbcWei, rusdWei, sbcError}` |
-| `wallet send` | `{hash, receipt?}` (no `receipt` with `--no-wait`) |
-| `wallet x402` | `{status, headers, body, bodyEncoding, payment}` |
-| `call` | decoded return value (single value or array) |
-| `tx` | the full transaction object |
-| `receipt` | the full receipt object |
-| `code` | `{address, code}` |
-| `nonce` | `{address, nonce}` |
-| `storage` | `{address, slot, value}` |
-
-Errors continue to go to stderr as `error: <message>` with a non-zero exit code; only successful output is JSON-shaped.
-
-## Configuration
-
-In priority order (highest first):
-
-1. **CLI flag** — `--network`, `--rpc-url`, `--private-key`, `--sbc`, `--rusd`, `--json`
-2. **Environment** — `RADIUS_NETWORK`, `RADIUS_RPC_URL`, `RADIUS_SBC_ADDRESS`, `RADIUS_RUSD_ADDRESS`, `RADIUS_PASSWORD`, `RADIUS_KEYSTORE_PATH`, `RADIUS_HOME`
-3. **`~/.radius/config.json`** — fields: `network`, `rpcUrl`, `sbcAddress`, `rusdAddress`
-4. **Built-in defaults** — mainnet
-
-The SBC contract address must be configured for `wallet balance` and `wallet send … SBC` to work — there is no public default.
-
-## Notes on the Radius network
-
-- **RUSD** is the native gas token (18 decimals). `wallet send … RUSD` is a native value transfer.
-- **SBC** is an ERC-20 stablecoin (6 decimals). `wallet send … SBC` calls `transfer(address,uint256)` on the SBC contract.
-- Radius uses **fixed gas pricing**. All transactions will execute with the network gas price (n.b. they will fail if the requested gas price is too low).
-- If the account holds SBC but lacks RUSD, the network's Turnstile auto-converts SBC to RUSD inline for zero additional gas.
+| Package | What |
+| --- | --- |
+| [`packages/cli`](./packages/cli) | `radius-cli` — CLI wallet for Radius, modeled on Foundry's `cast` |
 
 ## Development
 
 ```bash
-npm install
-npm run build
-npm test
-node dist/index.js --help
+pnpm install                          # installs every workspace package
+pnpm build                            # builds every package
+pnpm test                             # runs every package's tests
+pnpm --filter radius-cli build        # one package
+node packages/cli/dist/index.js --help
 ```
+
+Requires Node ≥ 20 and pnpm 10 (`corepack enable pnpm`). Each package publishes independently from its own directory (`pnpm publish` inside `packages/<name>`).
