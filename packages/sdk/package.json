@@ -1,0 +1,60 @@
+{
+  "name": "radius-sdk",
+  "version": "0.0.1",
+  "description": "Accept and make Radius payments over x402 v2 \u2014 Hono / Cloudflare Workers first",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./hono": {
+      "types": "./dist/hono/index.d.ts",
+      "default": "./dist/hono/index.js"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "default": "./dist/client/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:e2e": "RADIUS_E2E=1 vitest run test/e2e",
+    "prepublishOnly": "pnpm run build"
+  },
+  "dependencies": {
+    "@x402/core": "2.25.0",
+    "@x402/evm": "2.25.0",
+    "viem": "^2.48.11"
+  },
+  "peerDependencies": {
+    "hono": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "hono": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260910.1",
+    "hono": "^4.13.7",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0",
+    "wrangler": "^4.131.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/radiustechsystems/radius-cli.git",
+    "directory": "packages/sdk"
+  }
+}
