@@ -5,11 +5,18 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 const { name, version } = JSON.parse(readFileSync(new URL('../../sdk/package.json', import.meta.url), 'utf8'));
-let published = '';
-try {
-  published = execFileSync('npm', ['view', `${name}@${version}`, 'version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-} catch {
-  /* not found */
+const lookup = () => {
+  try {
+    return execFileSync('npm', ['view', `${name}@${version}`, 'version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch {
+    return '';
+  }
+};
+// `changeset publish` pushes the SDK seconds before the CLI; give the registry a moment to catch up.
+let published = lookup();
+for (let attempt = 0; published !== version && attempt < 5; attempt++) {
+  await new Promise((r) => setTimeout(r, 3000));
+  published = lookup();
 }
 if (published !== version) {
   console.error(`radius-cli depends on ${name}@${version}, which is not on npm. Publish packages/sdk first (pnpm publish in packages/sdk).`);
