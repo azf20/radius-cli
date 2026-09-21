@@ -45,9 +45,6 @@ importers:
       '@x402/evm':
         specifier: 2.25.0
         version: 2.25.0(typescript@5.9.3)
-      viem:
-        specifier: ^2.48.11
-        version: 2.56.5(typescript@5.9.3)(zod@3.25.76)
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^5.20260910.1
@@ -58,6 +55,9 @@ importers:
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
+      viem:
+        specifier: ^2.48.11
+        version: 2.56.5(typescript@5.9.3)(zod@3.25.76)
       vitest:
         specifier: ^3.2.0
         version: 3.2.7(@types/node@22.20.3)
@@ -85,6 +85,9 @@ importers:
       radius-sdk:
         specifier: workspace:*
         version: link:../..
+      viem:
+        specifier: ^2.48.11
+        version: 2.56.5(typescript@5.9.3)(zod@3.25.76)
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^5.20260910.1

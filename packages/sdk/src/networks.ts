@@ -14,7 +14,9 @@
  * responses on 2026-09-11.
  */
 
-import { defineChain, type Chain } from 'viem';
+import type { Chain } from 'viem';
+
+// Plain Chain objects keep root and seller imports independent of viem at runtime.
 
 export type Address = `0x${string}`;
 export type Caip2 = `eip155:${number}`;
@@ -56,24 +58,24 @@ export interface RadiusNetwork {
 }
 
 /** Radius mainnet (id 723487). Same values as viem's `radius`. */
-export const radiusMainnetChain: Chain = defineChain({
+export const radiusMainnetChain: Chain = {
   id: 723_487,
   name: 'Radius Network',
   nativeCurrency: { name: 'Radius USD', symbol: 'RUSD', decimals: 18 },
   rpcUrls: { default: { http: ['https://rpc.radiustech.xyz'] } },
   blockExplorers: { default: { name: 'Radius Network Explorer', url: 'https://network.radiustech.xyz' } },
   testnet: false,
-});
+};
 
 /** Radius testnet (id 72344). Same values as viem's `radiusTestnet`. */
-export const radiusTestnetChain: Chain = defineChain({
+export const radiusTestnetChain: Chain = {
   id: 72_344,
   name: 'Radius Test Network',
   nativeCurrency: { name: 'Radius USD', symbol: 'RUSD', decimals: 18 },
   rpcUrls: { default: { http: ['https://rpc.testnet.radiustech.xyz'] } },
   blockExplorers: { default: { name: 'Radius Test Network Explorer', url: 'https://testnet.radiustech.xyz' } },
   testnet: true,
-});
+};
 
 /** SBC is deployed deterministically: same address on mainnet and testnet. */
 export const SBC: RadiusAsset = {
@@ -142,14 +144,14 @@ export function defineRadiusNetwork(config: CustomNetworkConfig): RadiusNetwork 
       throw new Error(`defineRadiusNetwork: chainId must be a positive integer (got ${config.chainId})`);
     }
     if (!config.rpcUrl) throw new Error('defineRadiusNetwork: rpcUrl is required');
-    chain = defineChain({
+    chain = {
       id: config.chainId,
       name: config.name ?? `radius-${config.chainId}`,
       nativeCurrency: radiusMainnetChain.nativeCurrency,
       rpcUrls: { default: { http: [stripTrailingSlash(config.rpcUrl)] } },
       blockExplorers: config.explorerUrl ? { default: { name: 'Explorer', url: stripTrailingSlash(config.explorerUrl) } } : undefined,
       testnet: config.testnet ?? true,
-    });
+    };
   }
   return fromChain(chain, {
     name: config.name,
@@ -235,13 +237,13 @@ function fromChain(chain: Chain, radius: { name?: string; facilitatorUrl: string
 function withChainOverrides(chain: Chain, o: { rpcUrl?: string; explorerUrl?: string }): Chain {
   if (!o.rpcUrl && !o.explorerUrl) return chain;
   const explorerName = chain.blockExplorers?.default.name ?? 'Explorer';
-  return defineChain({
+  return {
     ...chain,
     rpcUrls: o.rpcUrl ? { ...chain.rpcUrls, default: { ...chain.rpcUrls.default, http: [stripTrailingSlash(o.rpcUrl)] } } : chain.rpcUrls,
     blockExplorers: o.explorerUrl
       ? { ...chain.blockExplorers, default: { name: explorerName, url: stripTrailingSlash(o.explorerUrl) } }
       : chain.blockExplorers,
-  });
+  };
 }
 
 function rpcUrlOf(chain: Chain): string {

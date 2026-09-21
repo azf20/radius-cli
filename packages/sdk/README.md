@@ -5,6 +5,34 @@ Hono and Cloudflare Workers first. SBC is the default currency, mainnet the defa
 
 Status: not yet published to npm.
 
+## Installation dependencies
+
+For this unpublished preview, use the workspace examples (`pnpm install` at the repository
+root, then `pnpm --filter radius-sdk build`). Once published, install the dependencies for
+the entry point you use:
+
+```sh
+# Hono seller
+pnpm add radius-sdk hono
+
+# Buyer / agent (including applications that also accept payments)
+pnpm add radius-sdk viem
+```
+
+Hono and viem are optional peer dependencies. The `radius-sdk/hono` entry point requires Hono;
+`radius-sdk/client` requires viem `^2.48.11`. Root and Hono entry points do not load viem at
+runtime. Network definitions remain compatible with viem's `Chain` type; TypeScript consumers
+that resolve those declarations may also need viem installed for its types.
+
+Applications already using a compatible viem version can use that installation for the SDK's
+buyer client. The peer range makes this shared dependency explicit; applications using an
+older or incompatible version need to update it.
+
+This isolates runtime imports, not the installed dependency tree: `@x402/evm` currently depends
+on viem itself, so package managers can still install a transitive copy. Buyer applications
+should declare viem directly rather than rely on that copy being accessible. Deduplication
+across the full dependency tree depends on compatible ranges and the package manager's resolution.
+
 ## Accept payments (seller)
 
 ```ts
