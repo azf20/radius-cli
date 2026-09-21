@@ -1,0 +1,25 @@
+name: changeset
+
+# Every PR that changes a publishable package must carry a changeset (see .changeset/README.md).
+# Label the PR `no changeset` to skip, e.g. for docs or CI-only changes inside a package.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+jobs:
+  check:
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'no changeset') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Changed packages have a changeset
+        run: pnpm changeset status --since=origin/${{ github.base_ref }}
