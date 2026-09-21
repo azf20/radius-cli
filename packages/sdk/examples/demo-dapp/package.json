@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "hono": "^4.13.7",
-    "radius-sdk": "workspace:*"
+    "radius-sdk": "workspace:*",
+    "viem": "^2.48.11"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260910.1",
