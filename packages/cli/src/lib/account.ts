@@ -1,6 +1,6 @@
 import { password as promptPassword } from '@inquirer/prompts';
-import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import type { Hex, PrivateKeyAccount } from 'viem';
+import { generatePrivateKey, privateKeyToAccount, toAccount } from 'viem/accounts';
+import type { Hex, LocalAccount, PrivateKeyAccount } from 'viem';
 import { keystoreExists, loadAccount, readKeystoreAddress, saveKeystore } from './keystore.js';
 import { readPasswordless, writeCachedAddress, writePasswordless } from './config.js';
 import type { ResolvedConfig } from '../types.js';
@@ -73,4 +73,28 @@ export async function getOwnAddress(
   const addr = readKeystoreAddress(cfg.keystorePath);
   if (addr) return addr;
   return (await autoCreateKeystore(cfg)).address;
+}
+
+/**
+ * An account whose address is known now but whose key is loaded — password prompt and all — only
+ * when something is signed. `wallet x402` hands this to the SDK so a 402 is parsed and matched
+ * (network, asset, scheme, payTo) before the keystore is unlocked; a bad challenge never prompts.
+ * With --private-key the key is already in hand. Auto-creates a keystore on first use.
+ */
+export async function deferredAccount(
+  cfg: ResolvedConfig,
+  privateKeyOpt: string | undefined,
+): Promise<LocalAccount> {
+  if (privateKeyOpt) {
+    return privateKeyToAccount(normalizePrivateKey(privateKeyOpt));
+  }
+  const address = await getOwnAddress(cfg, undefined);
+  let loading: Promise<PrivateKeyAccount> | undefined;
+  const load = () => (loading ??= requireAccount(cfg, undefined));
+  return toAccount({
+    address,
+    signMessage: async (args) => (await load()).signMessage(args),
+    signTransaction: async (tx, options) => (await load()).signTransaction(tx, options),
+    signTypedData: async (data) => (await load()).signTypedData(data),
+  });
 }

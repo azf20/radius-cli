@@ -56,7 +56,7 @@ radius-cli wallet send 0xToken "transfer(address,uint256)" 0xTo 100   # arbitrar
 
 ## x402 HTTP payments
 
-Make an HTTP request and, if the server responds with `402 Payment Required` and an [x402](https://x402.org) challenge, pay it from the local wallet and retry.
+Make an HTTP request and, if the server responds with `402 Payment Required` and an [x402](https://x402.org) challenge, pay it from the local wallet and retry. The protocol side is handled by [`radius-sdk`](../sdk) (`createRadiusFetch`), the same code applications and agents use; the CLI adds the wallet, prompts and output.
 
 ```bash
 radius-cli wallet x402 get https://example.com/protected
@@ -70,14 +70,16 @@ Verbs: `get`, `post`, `put`, `patch`, `delete`, `head`, `options`.
 
 `-d, --data` accepts a literal string, `-d @path` to read from a file, or `-d -` to read from stdin. JSON-shaped bodies default to `Content-Type: application/json` unless one is set with `-H`.
 
-`--x402-threshold <decimal>` is in the asset's display units (e.g. `0.05` means 0.05 SBC, which is $0.05 since SBC is USD-pegged). When the offered fee is at or below the threshold, the request pays without prompting — designed for AI agents and other non-interactive use. For the `upto` scheme the threshold is compared against the authorized maximum. With no threshold and no TTY, the command refuses (exit 2) rather than hang.
+`--x402-threshold <decimal>` is in the asset's display units (e.g. `0.05` means 0.05 SBC, which is $0.05 since SBC is USD-pegged). When the offered fee is at or below the threshold, the request pays without prompting — designed for AI agents and other non-interactive use. For the `upto` scheme the threshold is compared against the authorized maximum. Above the threshold the CLI prompts on a TTY and refuses (exit 2) without one; with `--yes` as well it refuses rather than pays, so the threshold stays a hard cap and `--yes` only means "don't ask". With no threshold, `--yes` pays any amount, and with neither flag a non-TTY run refuses (exit 2) rather than hang.
 
-Both x402 v1 and v2 are supported, selected automatically from the server's advertised `x402Version`:
+Payments are made on the configured network (`--network`) in SBC; offers on other networks or in other assets are refused before anything is signed, and the keystore is only unlocked once an offer has been accepted. `--sbc` / `RADIUS_SBC_ADDRESS` relocate the SBC contract (for another deployment of the same token); the CLI still assumes SBC's symbol, 6 decimals and EIP-712 domain behind that address. When a server lists several compatible offers the first one in its order is taken. Both x402 v1 and v2 are supported, selected automatically from the server's advertised `x402Version`:
 
 - **`exact`** — a fixed price. v1 and v2 support EIP-3009 `transferWithAuthorization`; v2 also supports any ERC-20 advertised with `assetTransferMethod: "permit2"`, signing a Uniswap Permit2 `permitWitnessTransferFrom` authorization through `x402ExactPermit2Proxy`.
 - **`upto`** (v2, Uniswap Permit2 `permitWitnessTransferFrom` via the `x402UptoPermit2Proxy`) — the client signs a Permit2 authorization up to a maximum and the facilitator settles the actual usage (which may be less, or zero).
 
-Permit2 payments require an ERC-20 approval for the canonical Permit2 contract. Pass `--x402-approve-permit2` (or `-y`) to submit the approval automatically; otherwise the CLI prompts. The approval is unlimited and one-time, matching the x402 spec's "one-time gas approval" model: subsequent Permit2 payments need no further approval transactions, and each payment is still individually authorized by a signed Permit2 message capped to that payment's amount.
+Permit2 payments need an ERC-20 approval for the canonical Permit2 contract. When the server declares `eip2612GasSponsoring` (the Radius facilitator does), the CLI signs an EIP-2612 permit alongside the payment and no on-chain approval transaction is ever sent — a wallet holding only SBC can pay. Otherwise pass `--x402-approve-permit2` (or `-y`) to submit a one-time unlimited approval automatically; without it the CLI prompts (or refuses with no TTY). `--x402-approve-permit2` grants the approval whenever the allowance is short, sponsored or not, which is the way out when a facilitator answers 412. Each payment is still individually authorized by a signed Permit2 message capped to that payment's amount.
+
+The paid retry is never replayed across a cross-origin redirect.
 
 Body goes to stdout; payment confirmation and (optionally, with `--include`) headers go to stderr — pipeable.
 
@@ -169,11 +171,11 @@ The SBC contract address must be configured for `wallet balance` and `wallet sen
 
 ## Development
 
-This package lives in the `packages/cli` workspace of the radius-cli repository.
+This package lives in the `packages/cli` workspace of the radius-cli repository, next to `packages/sdk`.
 
 ```bash
 pnpm install                     # at the repository root
-pnpm --filter radius-cli build
+pnpm --filter radius-cli build   # tsc -b: builds packages/sdk first when its dist is missing or stale
 pnpm --filter radius-cli test
 node packages/cli/dist/index.js --help
 ```
