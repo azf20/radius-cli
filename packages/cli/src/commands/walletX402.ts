@@ -72,7 +72,7 @@ export function registerWalletX402(wallet: Command): void {
       '--x402-threshold <decimal>',
       "auto-pay if the offered fee ≤ this amount in the asset's display units",
     )
-    .option('-y, --yes', 'auto-confirm payment regardless of amount')
+    .option('-y, --yes', 'auto-confirm payment without prompting (capped by --x402-threshold when both are given)')
     .option(
       '--x402-approve-permit2',
       'grant Permit2 an unlimited token approval if one is missing and the server does not sponsor it',
@@ -88,6 +88,7 @@ export function registerWalletX402(wallet: Command): void {
 type Refusal =
   | { kind: 'insufficient-balance' }
   | { kind: 'no-tty' }
+  | { kind: 'over-threshold' }
   | { kind: 'declined' }
   | { kind: 'approval-no-tty' }
   | { kind: 'approval-declined' };
@@ -165,6 +166,14 @@ async function runX402(
       if (decision === 'refuse-no-tty') {
         refusal = { kind: 'no-tty' };
         writeChallengeSummary(o, amountStr, symbol, balance.formatted, isUpto);
+        return false;
+      }
+      if (decision === 'refuse-over-threshold') {
+        refusal = { kind: 'over-threshold' };
+        process.stderr.write(
+          `x402: offer ${isUpto ? 'authorizes up to ' : 'of '}${amountStr} ${symbol} exceeds --x402-threshold ` +
+            `${subOpts.x402Threshold}; not paying. Raise the threshold, or drop it to let --yes pay any amount.\n`,
+        );
         return false;
       }
       if (decision === 'prompt') {
@@ -333,7 +342,7 @@ async function reportPaymentError(e: RadiusPaymentError, ctx: ErrorContext): Pro
       return 1;
     case 'declined':
       // The hooks already explained themselves on stderr.
-      return refusal?.kind === 'no-tty' ? 2 : 1;
+      return refusal?.kind === 'no-tty' || refusal?.kind === 'over-threshold' ? 2 : 1;
     case 'payment_rejected': {
       // The SDK hands back the server's second 402 unread; show it the way the old client did.
       const detail = e.details as PaymentRejectedDetails;
