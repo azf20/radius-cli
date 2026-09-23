@@ -12,7 +12,10 @@
   "scripts": {
     "build": "pnpm --filter './packages/*' run build",
     "test": "pnpm --filter './packages/*' run test",
-    "typecheck": "pnpm --filter './packages/*' run typecheck"
+    "typecheck": "pnpm --filter './packages/*' run typecheck",
+    "changeset": "changeset",
+    "version-packages": "changeset version && pnpm install --lockfile-only",
+    "release": "pnpm build && changeset publish"
   },
   "packageManager": "pnpm@10.34.5",
   "pnpm": {
@@ -20,5 +23,8 @@
       "esbuild",
       "workerd"
     ]
+  },
+  "devDependencies": {
+    "@changesets/cli": "^3.0.3"
   }
 }

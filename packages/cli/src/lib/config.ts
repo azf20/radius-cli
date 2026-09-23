@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { isAddress, type Address } from 'viem';
-import { chainFor, DEFAULT_SBC_ADDRESS } from './chains.js';
+import { radiusMainnetChain, radiusTestnetChain, SBC } from 'radius-sdk';
 import type { GlobalOptions, NetworkName, ResolvedConfig } from '../types.js';
 
 const RADIUS_DIR = process.env.RADIUS_HOME ?? join(homedir(), '.radius');
@@ -41,13 +41,13 @@ export function resolveConfig(opts: GlobalOptions): ResolvedConfig {
     throw new Error(`--network must be 'mainnet' or 'testnet' (got '${networkRaw}')`);
   }
   const network = networkRaw as NetworkName;
-  const chain = chainFor(network);
+  const chain = network === 'testnet' ? radiusTestnetChain : radiusMainnetChain;
 
   const rpcUrl = opts.rpcUrl ?? process.env.RADIUS_RPC_URL ?? file.rpcUrl ?? chain.rpcUrls.default.http[0];
 
   const sbcAddress =
     pickAddress(opts.sbc ?? process.env.RADIUS_SBC_ADDRESS ?? file.sbcAddress, 'SBC address') ??
-    DEFAULT_SBC_ADDRESS;
+    SBC.address;
   const rusdAddress = pickAddress(
     opts.rusd ?? process.env.RADIUS_RUSD_ADDRESS ?? file.rusdAddress,
     'RUSD address',

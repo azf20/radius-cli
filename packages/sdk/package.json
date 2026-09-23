@@ -9,6 +9,7 @@
   },
   "files": [
     "dist",
+    "!dist/.tsbuildinfo",
     "README.md"
   ],
   "exports": {
@@ -28,20 +29,24 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
+    "test": "vitest run && pnpm run test:imports",
     "test:e2e": "RADIUS_E2E=1 vitest run test/e2e",
-    "prepublishOnly": "pnpm run build"
+    "prepublishOnly": "pnpm run build",
+    "test:imports": "pnpm run build && node --test scripts/imports.test.mjs"
   },
   "dependencies": {
     "@x402/core": "2.25.0",
-    "@x402/evm": "2.25.0",
-    "viem": "^2.48.11"
+    "@x402/evm": "2.25.0"
   },
   "peerDependencies": {
-    "hono": "^4.0.0"
+    "hono": "^4.0.0",
+    "viem": "^2.48.11"
   },
   "peerDependenciesMeta": {
     "hono": {
+      "optional": true
+    },
+    "viem": {
       "optional": true
     }
   },
@@ -50,7 +55,8 @@
     "hono": "^4.13.7",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0",
-    "wrangler": "^4.131.0"
+    "wrangler": "^4.131.0",
+    "viem": "^2.48.11"
   },
   "repository": {
     "type": "git",
