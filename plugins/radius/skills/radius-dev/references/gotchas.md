@@ -1,0 +1,473 @@
+# Production Gotchas
+
+Hard-won lessons from real-world Radius integrations. Review before shipping.
+
+## 1. SBC uses 6 decimals, not 18
+
+This is the single most common mistake. The SBC ERC-20 token on mainnet uses **6 decimals**. RUSD (native token) uses 18.
+
+```typescript
+import { parseUnits, formatUnits } from 'viem';
+
+// CORRECT — SBC uses 6 decimals
+const amount = parseUnits('1.0', 6);     // 1_000_000n
+const display = formatUnits(balance, 6); // "1.000000"
+
+// WRONG — sends 1e12x too much or displays balance as near-zero
+const amount = parseUnits('1.0', 18);    // 1_000_000_000_000_000_000n
+```
+
+The authoritative docs confirm: "RUSD uses 18 decimals, while SBC uses 6. For SBC, `10^6` base units map to `10^18` base units of RUSD at the same face value."
+
+---
+
+## 2. Gas price is NOT zero
+
+- `eth_gasPrice` returns the fixed gas price (~986M wei, ~1 gwei).
+- `eth_maxPriorityFeePerGas` returns the actual gas price (same value as `eth_gasPrice`).
+
+Query the gas price via `eth_gasPrice` RPC:
+
+```typescript
+const gasPrice = await publicClient.request({ method: 'eth_gasPrice' });
+const price = BigInt(gasPrice); // ~986000000n (~1 gwei)
+```
+
+Both `eth_gasPrice` and `eth_maxPriorityFeePerGas` return the correct fixed price. Standard viem fee estimation works.
+
+---
+
+## 3. Wallet compatibility — MetaMask only (reliably)
+
+Radius is a custom network. Most wallets don't know about it.
+
+- **MetaMask**: Reliably adds and switches to Radius via `wallet_addEthereumChain`.
+- **Coinbase Wallet, Trust Wallet, Rainbow**: May reject adding unknown chains entirely.
+
+Handle both error codes when switching fails:
+
+```typescript
+try {
+  await provider.request({
+    method: 'wallet_switchEthereumChain',
+    params: [{ chainId: '0xB0A1F' }], // 723487 mainnet
+  });
+} catch (switchError) {
+  const code = switchError.code ?? switchError.data?.originalError?.code;
+  if (code === 4902 || code === -32603) {
+    // Chain not recognized — attempt to add it
+    await provider.request({
+      method: 'wallet_addEthereumChain',
+      params: [{
+        chainId: '0xB0A1F',
+        chainName: 'Radius Network',
+        nativeCurrency: { name: 'RUSD', symbol: 'RUSD', decimals: 18 },
+        rpcUrls: ['https://rpc.radiustech.xyz'],
+        blockExplorerUrls: ['https://network.radiustech.xyz'],
+      }],
+    });
+  }
+}
+```
+
+Show unsupported wallets as "Coming Soon" rather than letting users hit confusing errors.
+
+---
+
+## 4. Chain ID format varies between wallets
+
+Different wallets return `eth_chainId` in different formats:
+
+- MetaMask: hex string `"0xB0A1F"`
+- Some wallets: decimal string `"723487"`
+- Some wallets: number `723487`
+
+Always normalize before comparing:
+
+```typescript
+function normalizeChainId(chainId: string | number): string {
+  if (typeof chainId === 'number') return '0x' + chainId.toString(16);
+  if (typeof chainId === 'string' && !chainId.startsWith('0x')) {
+    return '0x' + parseInt(chainId, 10).toString(16);
+  }
+  return chainId;
+}
+```
+
+---
+
+## 5. Block numbers are timestamps — use BigInt
+
+`eth_blockNumber` returns the current timestamp in **milliseconds** (hex encoded). These values are extremely large (~1.77 trillion range).
+
+```typescript
+// WRONG — loses precision at these magnitudes
+const block = parseInt(hexBlockNumber, 16);
+
+// CORRECT
+const block = BigInt(hexBlockNumber);
+```
+
+Do not:
+- Iterate blocks sequentially (enormous gaps between blocks with transactions).
+- Treat block number as canonical chain height.
+- Assume "N blocks later" semantics match Ethereum finality patterns.
+
+---
+
+## 6. Transaction receipts can briefly read null
+
+`eth_getTransactionReceipt` can return `null` for a transaction RPC call that has returned a tx-hash — a short read-path lag between transaction acceptance and transaction excecution Don't treat a single `null` as failure; poll for the receipt instead of reading once:
+
+```typescript
+// Poll — the receipt resolves once available, and a returned receipt is final.
+const receipt = await publicClient.waitForTransactionReceipt({ hash });
+if (receipt.status !== 'success') throw new Error('tx reverted');
+```
+
+A `null` also does not distinguish "not yet served" from "still queued": a future-nonce tx waiting in the pseudo-mempool (see gotcha #7b) reads `null` until the gap fills. In both cases the fix is the same — poll, don't single-read.
+
+---
+
+## 7. Nonce management for concurrent sends from one wallet
+
+Batches with pre-assigned contiguous nonces land fine — Radius's pseudo-mempool accepts and orders them. A single `forge script --broadcast` deploying many contracts confirms all of them in one run (verified: a 29-transaction script landed with contiguous nonces, 29/29 successful). **You do not need to deploy one contract at a time, run `--slow`, or add fixed delays between transactions.**
+
+The one case that still needs care is firing *unmanaged concurrent* transactions from the same wallet — e.g. a hot/settlement wallet that calls `sendTransaction` from many requests at once without coordinating nonces. As on any EVM chain, those can race and collide because each read of the pending nonce returns the same value before the earlier tx is accounted for.
+
+For that case, let viem manage nonces (it tracks them per account by default), or serialize sends through a queue and retry on the occasional collision:
+
+```typescript
+function isNonceError(err: any): boolean {
+  const msg = (err?.message || err?.shortMessage || String(err)).toLowerCase();
+  return msg.includes('nonce') ||
+         msg.includes('replacement transaction underpriced') ||
+         msg.includes('already known');
+}
+
+async function sendWithRetry(
+  walletClient: WalletClient,
+  publicClient: PublicClient,
+  params: TransactionParams
+): Promise<Hash> {
+  try {
+    return await walletClient.sendTransaction(params);
+  } catch (err: any) {
+    if (!isNonceError(err)) throw err;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await new Promise(r => setTimeout(r, 500));
+      const freshNonce = await publicClient.getTransactionCount({
+        address: params.account,
+      });
+      try {
+        return await walletClient.sendTransaction({ ...params, nonce: freshNonce });
+      } catch (retryErr: any) {
+        if (attempt === 3 || !isNonceError(retryErr)) throw retryErr;
+      }
+    }
+    throw err;
+  }
+}
+```
+
+This applies only to unmanaged concurrent sends from a single wallet — not to normal sequential sends or pre-signed contiguous-nonce batches, both of which land without special handling.
+
+---
+
+## 7b. Replace-by-fee is queued-txs-only; a returned hash means "queued," not "will execute"
+
+Radius tries to execute every transaction immediately. If a transaction's nonce is higher than the account's current nonce, it can't execute yet, so it enters a bounded "pseudo-mempool" that queues such future-nonce transactions until the gap is filled and they become executable. Two behaviors of this queue differ from Ethereum's mempool and affect ported code.
+
+**Replace-by-fee only applies to still-queued txs.** On most Ethereum nodes, resubmitting at an already-occupied nonce with higher gas replaces the pending tx — the basis for cancel / fee-bump / stuck-tx recovery. On Radius a **used** nonce (one whose tx already executed) is **rejected** — returned as the generic `-33009 Exec Failed` (not an RBF-specific code): with instant finality the tx has already executed, so there is nothing to replace (verified live). RBF *does* work for a tx still **queued** behind an unfilled future nonce — resubmitting at that nonce with a **higher** gas price swaps it in (same or lower gas is rejected; verified live). Exactly one tx per nonce executes, and it executes at the fixed system gas price — the higher gas price only wins the replacement, it is not what you pay. The Ethereum "fee-bump a stuck tx at the current nonce" pattern has no equivalent — current-nonce txs never sit pending.
+
+```typescript
+// WRONG on Radius — "unstick" a tx by resubmitting the same nonce at higher gas.
+// The replacement is rejected; nothing gets unstuck, so recovery logic that waits for it never completes.
+await walletClient.sendTransaction({ ...params, nonce: stuckNonce, gasPrice: gasPrice * 2n });
+```
+
+There is nothing to unstick: gas price is fixed (no underpriced txs) and finality is instant, so a validly submitted tx executes immediately or is rejected at submission — it never sits pending as a fee-bumpable tx. **Remove cancel / fee-bump / stuck-tx recovery when porting; rely on instant finality.**
+
+**A returned tx hash means "queued," not "will execute."** A hash from `eth_sendRawTransaction` for a **future-nonce** tx (submitted while an earlier nonce is unfilled) means only that it was accepted into the queue. It executes when the gap fills — the hash is **not** a commitment that it will mine. If the gap is never filled it never executes (in testing, a queued future-nonce tx stayed queued and executed only once the gap was filled). "Queued" is not a success signal — verify execution by polling for the receipt (`waitForTransactionReceipt`), the check most tools already use. A returned receipt is final. But a single `null` read is not proof the tx failed: a still-queued tx reads `null`, and a just-executed tx's receipt can briefly lag the Explorer (see gotcha #6) — poll, don't single-read.
+
+```typescript
+// WRONG — treating the returned hash as "submitted == will land"
+const hash = await walletClient.sendTransaction(params);
+markPaymentSuccessful(hash); // may be parked behind a nonce gap that never fills
+
+// CORRECT — poll for the receipt; submit in nonce order so gaps fill
+const hash = await walletClient.sendTransaction(params);
+const receipt = await publicClient.waitForTransactionReceipt({ hash });
+if (receipt.status !== 'success') throw new Error('tx reverted');
+// Or use eth_sendRawTransactionSync (EIP-7966) to get the receipt directly.
+```
+
+Send in nonce order and keep each account's in-flight txs low (see gotcha #7) so queued future-nonce txs can execute.
+
+---
+
+## 8. EIP-2612 permit signing — domain must match exactly
+
+The Stable Coin token uses EIP-2612 permits. The EIP-712 domain must match what the token contract was deployed with:
+
+```typescript
+const domain = {
+  name: 'Stable Coin',          // NOT "SBC", NOT "Radius SBC"
+  version: '1',         // String "1", not number 1
+  chainId: 723487,      // Actual chain ID as a number
+  verifyingContract: '0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb',
+};
+```
+
+If any field is wrong, `recoverTypedDataAddress` recovers a different address and the permit fails silently.
+
+---
+
+## 9. Signature v-value normalization
+
+After `eth_signTypedData_v4`, the v value needs normalization:
+
+```typescript
+const r = '0x' + signature.slice(2, 66);
+const s = '0x' + signature.slice(66, 130);
+let v = parseInt(signature.slice(130, 132), 16);
+if (v < 27) v += 27; // Ledger and some hardware wallets return 0 or 1
+```
+
+Without this, server-side signature recovery fails for hardware wallet users.
+
+---
+
+## 10. Nonce reading for permits
+
+To read the current nonce for a permit:
+
+```typescript
+async function readNonce(
+  publicClient: PublicClient,
+  tokenAddress: Address,
+  owner: Address
+): Promise<string> {
+  const data = '0x7ecebe00' + owner.slice(2).padStart(64, '0');
+  const result = await publicClient.request({
+    method: 'eth_call',
+    params: [{ to: tokenAddress, data }, 'pending'],
+  });
+  return BigInt(result).toString();
+}
+```
+
+---
+
+## 11. x402 settlement methods
+
+> **For full x402 implementation details, see the x402 skill.**
+
+x402 on Radius supports two settlement methods. Which one applies depends on the facilitator's `/supported` response.
+
+### Permit2 flow (`permit2`) — recommended
+
+The payer signs a Permit2 `SignatureTransfer` message. The facilitator submits it to the canonical `x402ExactPermit2Proxy` contract, which executes the transfer.
+
+- The **spender** in the signed Permit2 message is the `x402ExactPermit2Proxy` at `0x402085c248EeA27D92E8b30b2C58ed07f9E20001` (same across all supported EVM chains — see the [x402 exact EVM spec](https://github.com/coinbase/x402/blob/main/specs/schemes/exact/scheme_exact_evm.md)).
+- Integrators do **not** need to discover or fund a facilitator-specific settlement wallet.
+- The payer must have approved the Permit2 contract (`0x000000000022D473030F116dDEE9F6B43aC78BA3`) for the payment token beforehand.
+
+### EIP-2612 flow (`eip2612GasSponsoring`)
+
+The facilitator uses a two-step on-chain settlement:
+
+1. `permit(owner, spender, value, deadline, v, r, s)` — sets ERC-20 allowance
+2. `transferFrom(owner, paymentAddress, value)` — moves tokens
+
+Both transactions are sent by the facilitator from its own settlement wallet (the integrator does not operate this wallet). This means:
+- The facilitator's settlement wallet address is the `spender` in the EIP-2612 permit.
+- The facilitator covers gas (RUSD).
+- The `paymentAddress` (token recipient) can differ from the facilitator's settlement wallet.
+
+---
+
+## 12. CORS — proxy RPC calls through your backend
+
+The Radius RPC and Explorer API should be called from your server, not directly from the browser. Set up a thin proxy layer for browser-based apps.
+
+---
+
+## 13. Explorer API base path is `/api`
+
+The Radius Explorer REST API is served under `/api`:
+
+```
+https://network.radiustech.xyz/api/v1/transactions/latest?limit=50
+```
+
+Not at the root path. This is not prominently documented.
+
+---
+
+## 14. EIP-6963 wallet discovery timing
+
+Modern multi-wallet setups fight over `window.ethereum`. Use EIP-6963:
+
+```typescript
+const wallets: Map<string, EIP6963ProviderDetail> = new Map();
+let timer: ReturnType<typeof setTimeout>;
+
+window.addEventListener('eip6963:announceProvider', (event) => {
+  const { info, provider } = (event as CustomEvent).detail;
+  if (typeof provider.request === 'function') {
+    wallets.set(info.uuid, { info, provider });
+  }
+  clearTimeout(timer);
+  timer = setTimeout(markReady, 500); // Reset — more wallets may arrive
+});
+
+window.dispatchEvent(new Event('eip6963:requestProvider'));
+timer = setTimeout(markReady, 500);
+```
+
+Wait at least 500ms. Some wallets announce late.
+
+---
+
+## 15. Extract revert reasons from wrapped errors
+
+Radius reverts are wrapped in multiple error layers:
+
+```typescript
+function extractRevertReason(err: any): string {
+  if (err?.shortMessage) return err.shortMessage;
+  if (err?.cause?.shortMessage) return err.cause.shortMessage;
+  const msg = err?.message || String(err);
+  const match = msg.match(/reverted with reason string '([^']+)'/);
+  if (match) return `Reverted: ${match[1]}`;
+  const match2 = msg.match(/execution reverted: (.+)/);
+  if (match2) return match2[1];
+  return msg.slice(0, 200);
+}
+```
+
+---
+
+## 16. Initialize chain stats before server listen
+
+If your app displays on-chain stats on the landing page, fetch them before `httpServer.listen()`. Otherwise the first visitors see all zeros.
+
+```typescript
+await Promise.race([
+  Promise.all([verifyContracts(), initChainStats()]),
+  new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('Init timeout')), 120_000)
+  ),
+]).catch(err => console.warn(`Init warning: ${err.message}`));
+
+httpServer.listen(port);
+```
+
+---
+
+## 17. nodejs_compat to the CF Workers
+
+Using viem server-side in Cloudflare Workers requires compatibility_flags = ["nodejs_compat"] in wrangler.toml. Without it, the Worker fails silently at deploy time or crashes at runtime.
+
+
+## 18. `eth_getLogs` requires an address filter
+
+Unlike Ethereum, Radius **requires** an `address` field on all `eth_getLogs` calls. Omitting it returns error `-33014`.
+
+Additionally, the block range is capped at 1,000,000 units. Because block numbers are millisecond timestamps, this covers ~16 minutes 40 seconds (not ~1 million blocks). Exceeding this range returns error `-33002`.
+
+```typescript
+// WRONG — returns error -33014 on Radius
+const logs = await publicClient.getLogs({
+  fromBlock: startBlock,
+  toBlock: endBlock,
+});
+
+// CORRECT — always include address
+const logs = await publicClient.getLogs({
+  address: contractAddress,
+  fromBlock: startBlock,
+  toBlock: endBlock,
+});
+```
+
+For large time ranges, split into consecutive chunks of up to 1,000,000 block units.
+
+---
+
+## 19. On-chain randomness is not a secure source
+
+On-chain values are not a secure source of randomness on any EVM chain. On Radius this is especially clear-cut: the block values Ethereum contracts sometimes use for entropy are constant or deterministic here, so they provide no unpredictability at all. Note the contrast so ported contracts are not assumed to behave the same way: `block.prevrandao` returns the beacon RANDAO mix on Ethereum (varies block to block) but is constant `0` on Radius.
+
+| Source | Radius behavior |
+|--------|-----------------|
+| `block.prevrandao` | Constant `0` |
+| `block.difficulty` | Constant `0` (same opcode as `prevrandao`) |
+| `blockhash(block.number - 1)` | Deterministic, non-cryptographic, no entropy — computable within the same transaction |
+| `blockhash` for older blocks | Non-zero only within ~256 of the current block number — and since block numbers are ms timestamps, that's only a few hundred ms of history (versus ~51 min on Ethereum). EIP-2935's history contract isn't deployed, so OpenZeppelin's `Blockhash` utility can't extend past that native window (returns the predictable native `blockhash` value within it, `0` for older blocks). |
+
+Because these values are known when the transaction executes, the result is fully determined in advance — a contract can compute it in the same transaction, so it provides no unpredictability (verified live: a contract computed a naive lottery's winner within the same transaction, every time).
+
+```solidity
+// Predictable on Radius — not a source of randomness
+uint256 random = uint256(blockhash(block.number - 1));
+uint256 winner = random % participants.length;
+
+// Also not random — constant 0 on Radius
+uint256 r = block.prevrandao; // and block.difficulty
+```
+
+Affected patterns: lotteries, raffles, randomized NFT mints and trait generation, gaming outcomes, commit-reveal schemes hashing against `blockhash()`.
+
+**Use instead:** derive entropy off-chain and bring it on-chain through a trusted path — an external randomness oracle (VRF-style), or a commit-reveal scheme whose revealed value is off-chain entropy. What matters is that the entropy is off-chain: a commit-reveal that ultimately hashes an on-chain block value is still fully predictable. Never derive randomness from block values.
+
+---
+
+## 20. Historical block numbers rejected; named tags return current state
+
+State query methods (`eth_getBalance`, `eth_call`, `eth_getCode`, `eth_getStorageAt`, `eth_getTransactionCount`, `eth_estimateGas`) parse block tags as follows:
+
+- **Accepted:** `latest`, `pending`, `safe`, `finalized` — all return current state.
+- **Rejected:** Historical block numbers and `earliest` — return error `-32000`: `"required historical state unavailable, only 'latest', 'pending', 'safe', and 'finalized' are supported block tags"`.
+
+Radius does not support archive mode or historical state access.
+
+Implications:
+- Foundry fork mode (`--fork-block-number`) cannot query past state.
+- Debugging reverted transactions with `eth_call` at a past block is not available.
+- Price oracles and analytics that query historical balances will get error `-32000`.
+
+---
+
+## 21. Chain ID migration (723 → 723487)
+
+The Radius mainnet chain ID changed from `723` (`0x2D3`) to `723487` (`0xB0A1F`). The testnet chain ID (`72344`) is unchanged. This affects several areas:
+
+- **EIP-712 signatures:** Off-chain typed-data signatures (EIP-2612 permits, meta-transactions) signed with `chainId: 723` will not verify. DApps must re-request signatures from users.
+- **Wallet configurations:** Users who added Radius to MetaMask with chain ID `723` need to remove and re-add the network with `723487` (`0xB0A1F`).
+- **Hardcoded chain IDs:** Any application logic that hardcodes `723`, `0x2D3`, or `"723"` for chain detection or switching must be updated.
+
+Best practice: read chain ID dynamically from the connected provider rather than hardcoding it.
+
+---
+
+## 22. Some standard read methods are unsupported (`eth_getProof`, `eth_getBlockReceipts`)
+
+Two standard Ethereum read methods return error `-33000` on Radius:
+
+- **`eth_getProof`** — Radius stores state across a parallelized, sharded infrastructure with no single global Merkle-Patricia trie, so it does not issue state proofs; its instant, deterministic finality removes the need for them. Read state directly with `eth_getBalance`, `eth_getCode`, and `eth_getStorageAt`.
+- **`eth_getBlockReceipts`** — Radius executes transactions individually, not in blocks (the block number is wall-clock time for tooling compatibility), so "every receipt in a block" is not a meaningful unit. To fetch a block's receipts, enumerate its transactions with `eth_getBlockByNumber` (full) and call `eth_getTransactionReceipt` for each; for event indexing of known contracts, use address-filtered `eth_getLogs` (see #18).
+
+---
+
+## Quick reference: environment variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `RADIUS_RPC_API_KEY` | Yes (production) | API key for authenticated RPC access |
+| `SETTLEMENT_PRIVATE_KEY` | Self-hosted settlement only | Only needed if you operate your own settlement infrastructure. When using a hosted facilitator (Radius, Stablecoin.xyz, etc.), the facilitator manages settlement — you do not need this key. If required, use a secrets manager or encrypted keystore — see [security checklist](security.md). |
+| `SBC_ASSET` | No | SBC token address (default: `0x33ad...14fb`) |
+| `PAYMENT_ADDRESS` | No | Token recipient address |
+| `NETWORK_CHAIN_ID` | No | Chain ID (default: 723487 for mainnet, 72344 for testnet) |

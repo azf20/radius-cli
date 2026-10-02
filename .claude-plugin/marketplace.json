@@ -1,0 +1,22 @@
+{
+    "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+    "name": "radius-cli",
+    "owner": {
+        "name": "Radius Technology Systems"
+    },
+    "metadata": {
+        "version": "0.0.3",
+        "description": "Claude Code plugins from Radius Technology Systems for AI-assisted blockchain development on the Radius Network"
+    },
+    "plugins": [
+        {
+            "name": "radius-dev",
+            "version": "0.0.2",
+            "description": "Radius Network tools for x402 payments, blockchain development, and testnet faucet",
+            "author": {
+                "name": "Radius Technology Systems"
+            },
+            "source": "./plugins/radius"
+        }
+    ]
+}
