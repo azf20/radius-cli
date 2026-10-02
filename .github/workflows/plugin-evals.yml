@@ -41,8 +41,6 @@ jobs:
       CLAUDE_EVAL_PROVIDER: ${{ vars.CLAUDE_EVAL_PROVIDER }}
       CLAUDE_EVAL_MODEL: ${{ vars.CLAUDE_EVAL_MODEL }}
       CLAUDE_EVAL_JUDGE_MODEL: ${{ vars.CLAUDE_EVAL_JUDGE_MODEL }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,17 +54,31 @@ jobs:
       - name: Run Claude plugin evals
         working-directory: plugins/radius
         shell: bash
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           set -euo pipefail
           if [[ "$CLAUDE_EVAL_PROVIDER" == "openrouter" ]]; then
-            test -n "$OPENROUTER_API_KEY"
+            if [[ -z "$OPENROUTER_API_KEY" ]]; then
+              echo '::error::Set OPENROUTER_API_KEY to run plugin evals.'
+              exit 1
+            fi
             export ANTHROPIC_BASE_URL=https://openrouter.ai/api
             export ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY"
             export ANTHROPIC_API_KEY=''
-            test -n "$CLAUDE_EVAL_MODEL"
-            test -n "$CLAUDE_EVAL_JUDGE_MODEL"
+            if [[ -z "$CLAUDE_EVAL_MODEL" || -z "$CLAUDE_EVAL_JUDGE_MODEL" ]]; then
+              echo '::error::Set CLAUDE_EVAL_MODEL and CLAUDE_EVAL_JUDGE_MODEL for OpenRouter.'
+              exit 1
+            fi
+          elif [[ -z "$CLAUDE_EVAL_PROVIDER" || "$CLAUDE_EVAL_PROVIDER" == "anthropic" ]]; then
+            if [[ -z "$ANTHROPIC_API_KEY" ]]; then
+              echo '::error::Set ANTHROPIC_API_KEY to run plugin evals, or configure OpenRouter.'
+              exit 1
+            fi
           else
-            test -n "$ANTHROPIC_API_KEY"
+            echo '::error::CLAUDE_EVAL_PROVIDER must be anthropic or openrouter.'
+            exit 1
           fi
           claude plugin eval . \
             --trust-plugin \
