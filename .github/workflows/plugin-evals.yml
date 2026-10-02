@@ -1,0 +1,90 @@
+name: Claude plugin evals
+
+on:
+  pull_request:
+    paths:
+      - .claude-plugin/**
+      - plugins/radius/**
+      - scripts/validate_plugin.py
+      - .github/workflows/plugin-evals.yml
+  push:
+    branches: [main]
+    paths:
+      - .claude-plugin/**
+      - plugins/radius/**
+      - scripts/validate_plugin.py
+      - .github/workflows/plugin-evals.yml
+
+permissions: {}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate plugin structure and scenarios
+        run: python3 scripts/validate_plugin.py
+
+  eval:
+    needs: validate
+    # Forked PR code never receives model credentials.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      CLAUDE_EVAL_PROVIDER: ${{ vars.CLAUDE_EVAL_PROVIDER }}
+      CLAUDE_EVAL_MODEL: ${{ vars.CLAUDE_EVAL_MODEL }}
+      CLAUDE_EVAL_JUDGE_MODEL: ${{ vars.CLAUDE_EVAL_JUDGE_MODEL }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Claude Code
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash -s 2.1.272
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Validate Claude plugin
+        run: claude plugin validate plugins/radius
+      - name: Run Claude plugin evals
+        working-directory: plugins/radius
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$CLAUDE_EVAL_PROVIDER" == "openrouter" ]]; then
+            test -n "$OPENROUTER_API_KEY"
+            export ANTHROPIC_BASE_URL=https://openrouter.ai/api
+            export ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY"
+            export ANTHROPIC_API_KEY=''
+            test -n "$CLAUDE_EVAL_MODEL"
+            test -n "$CLAUDE_EVAL_JUDGE_MODEL"
+          else
+            test -n "$ANTHROPIC_API_KEY"
+          fi
+          claude plugin eval . \
+            --trust-plugin \
+            --json results.json \
+            --threshold 0.75 \
+            --runs 2 \
+            --ablation none \
+            --model "${CLAUDE_EVAL_MODEL:-claude-sonnet-5}" \
+            --judge-model "${CLAUDE_EVAL_JUDGE_MODEL:-claude-haiku-4-5}" \
+            --no-publish \
+            --max-cost-usd 10
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-plugin-evals
+          path: |
+            plugins/radius/results.json
+            plugins/radius/evals/results/
+          if-no-files-found: ignore
+          retention-days: 14

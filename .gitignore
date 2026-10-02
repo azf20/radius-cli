@@ -3,3 +3,5 @@ dist/
 .env
 .wrangler/
 *.log
+plugins/radius/evals/results/
+plugins/radius/results.json
