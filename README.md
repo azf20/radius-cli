@@ -15,6 +15,41 @@ pnpm add radius-sdk viem          # SDK, buyer / agent side
 
 Runnable SDK examples (seller worker, agent buyer, browser demo dapp) are in [`packages/sdk/examples`](./packages/sdk/examples).
 
+## Agent skills
+
+The [Radius Claude Code plugin](plugins/radius) contains the `radius-dev`, `x402`,
+and `dripping-faucet` skills. The marketplace manifest is at
+[`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json). These files
+live outside `packages/*`, so plugin changes do not enter the npm release flow
+or need a changeset.
+
+In Claude Code, install from this repository:
+
+```text
+/plugin marketplace add https://github.com/radiustechsystems/radius-cli.git
+/plugin install radius-dev@radius-cli
+```
+
+For skill changes, run `python3 scripts/validate_plugin.py` and
+`claude plugin validate plugins/radius`. The path-filtered
+[`plugin-evals.yml`](.github/workflows/plugin-evals.yml) runs Claude Code plugin
+evals on trusted plugin changes. Add or update cases under
+[`plugins/radius/evals`](plugins/radius/evals) with each behavior change, inspect
+the CI report, then revise the skill or case based on the observed result.
+The existing skill `evaluations/*.json` files remain as scenario references;
+Claude Code uses the `evals/` suite for executable checks.
+
+CI accepts either an `ANTHROPIC_API_KEY` secret, or an `OPENROUTER_API_KEY`
+secret with repository variable `CLAUDE_EVAL_PROVIDER=openrouter`. Set
+`CLAUDE_EVAL_MODEL` and `CLAUDE_EVAL_JUDGE_MODEL` repository variables to model
+IDs supported by the chosen provider. The defaults target Anthropic. Fork PRs
+run static checks without model credentials; trusted PRs and main pushes run
+the paid eval suite. No eval case is allowed to execute wallet or payment tools.
+
+The older skills repository still owns its live Hermes subscriber publisher.
+Moving that publisher requires updating subscribers' repository and commit
+settings first; this plugin migration does not send those webhooks.
+
 ## Development
 
 ```bash
