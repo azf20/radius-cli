@@ -1,22 +1,32 @@
-# TypeScript Reference (viem)
+# TypeScript Reference (Radius SDK and viem)
 
 ## Overview
 
-All Radius TypeScript integration uses **plain viem** — no wrapper SDK. You define the Radius chain with `defineChain`, create clients with `createPublicClient` and `createWalletClient`, and interact with contracts using viem's standard APIs.
+Use `radius-sdk/hono` for x402 seller middleware and `radius-sdk/client` for paying fetch, balances, ERC-20, Permit2, and settlement actions. The root `radius-sdk` entry point provides networks, amounts, receipts, and errors. Use viem directly for general EVM contract operations. The older `@radiustechsystems/sdk` package is deprecated; it is not `radius-sdk`.
 
 ## Installation
 
 ```bash
-pnpm add viem
+pnpm add radius-sdk viem   # buyer and viem action examples
+# or: pnpm add radius-sdk hono   # Hono seller middleware
 ```
 
 Requirements:
-- Node.js >= 18
+- Node.js >= 20 for radius-sdk
 - TypeScript 5+ (recommended)
 
 ## Chain definition
 
-Standard `defineChain`:
+When the SDK is installed, use its chain definitions instead of copying network constants:
+
+```typescript
+import { radiusMainnet, radiusTestnet } from 'radius-sdk';
+import { createPublicClient, http } from 'viem';
+
+const client = createPublicClient({ chain: radiusTestnet.chain, transport: http() });
+```
+
+For a plain viem integration without the SDK, use `defineChain`:
 
 ```typescript
 import { defineChain } from 'viem';

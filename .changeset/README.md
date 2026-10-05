@@ -5,6 +5,12 @@ changeset: `pnpm changeset`, pick the package(s), pick patch / minor / major, wr
 entry that will appear in the changelog. The `changeset` GitHub check refuses PRs that change a
 package without one; add the `no changeset` label for changes that need no release note.
 
+The Claude plugin under `plugins/radius` is released separately. Skill and plugin changes do not
+need a changeset unless the same PR also changes a publishable package. Bump the plugin version in
+`plugins/radius/.claude-plugin/plugin.json` for release content changes; plugin CI enforces this.
+If the skill needs a new CLI or SDK API, publish the npm package first, then release the plugin
+guidance with the minimum supported package version.
+
 Releasing is automated by `.github/workflows/release.yml`. Merging changesets to `main` opens (or
 refreshes) a **Version Packages** PR on the `changeset-release/main` branch: it runs `pnpm
 version-packages` (bumps versions, writes CHANGELOG.md files, bumps `radius-cli` whenever `radius-sdk`

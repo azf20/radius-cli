@@ -20,18 +20,37 @@ Runnable SDK examples (seller worker, agent buyer, browser demo dapp) are in [`p
 The [Radius Claude Code plugin](plugins/radius) contains the `radius-dev`, `x402`,
 and `dripping-faucet` skills. The marketplace manifest is at
 [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json). These files
-live outside `packages/*`, so plugin changes do not enter the npm release flow
-or need a changeset.
+live outside `packages/*`. The plugin has its own version in
+[`plugins/radius/.claude-plugin/plugin.json`](plugins/radius/.claude-plugin/plugin.json)
+and does not enter the npm Changesets release flow. The marketplace's
+`metadata.version` describes the catalog, not the plugin; the marketplace entry
+does not duplicate the plugin version.
 
 In Claude Code, install from this repository:
 
 ```text
-/plugin marketplace add https://github.com/radiustechsystems/radius-cli.git
+/plugin marketplace add radiustechsystems/radius-cli
 /plugin install radius-dev@radius-cli
 ```
 
-For skill changes, run `python3 scripts/validate_plugin.py` and
-`claude plugin validate plugins/radius`. The path-filtered
+Update an installed plugin with `claude plugin update radius-dev@radius-cli`.
+For every release-worthy change under `plugins/radius/skills`, or to the plugin
+manifest or README, bump the plugin manifest version in the same PR: patch for
+corrections, minor for new capabilities, major for incompatible changes. The
+plugin CI check enforces a version increase independently of Changesets.
+After merging to `main`, users of this GitHub marketplace can update; marketplace
+automatic updates are off by default unless users enable them. A plugin release
+may be tagged `radius-dev--v<version>` for a traceable release point.
+
+When CLI or SDK work changes a documented API, audit the affected skills in
+the package PR. Publish plugin instructions for a new package API only after
+the corresponding npm version is available, and state the minimum package
+version in that guidance. This avoids directing installed plugin users to code
+that has merged but has not yet been published to npm.
+
+For skill changes, run `python3 scripts/validate_plugin.py`,
+`claude plugin validate plugins/radius --strict`, and
+`claude plugin validate . --strict`. The path-filtered
 [`plugin-evals.yml`](.github/workflows/plugin-evals.yml) runs Claude Code plugin
 evals on trusted plugin changes. Add or update cases under
 [`plugins/radius/evals`](plugins/radius/evals) with each behavior change, inspect

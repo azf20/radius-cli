@@ -3,7 +3,9 @@
 `radius-cli wallet x402 <verb> <url>` is the canonical path for one-shot
 terminal and agent access to x402-gated endpoints. Use this `cast` flow only as
 a fallback in environments that cannot use `radius-cli` and already have a
-funded Foundry keystore account.
+funded Foundry keystore account. This specialized flow supports only a v2
+`exact` Permit2 offer with EIP-2612 gas sponsoring; use the CLI or SDK for
+other versions and schemes.
 
 For fresh agent-created wallets, use `RADIUS_HOME=.radius radius-cli wallet x402
 ...` as described in [x402-client.md](x402-client.md), not the Foundry
@@ -47,7 +49,15 @@ PAYMENT_REQUIRED="$(
 )"
 
 printf '%s' "$PAYMENT_REQUIRED" | base64 -d | jq . > /tmp/x402-required.json
-jq '.accepts[0]' /tmp/x402-required.json > /tmp/x402-accepted.json
+jq -e --arg network "$NETWORK" --arg asset "$SBC_TOKEN" '
+  select(.x402Version == 2 and (.extensions.eip2612GasSponsoring != null))
+  | .accepts
+  | map(select(.network == $network
+      and (.asset | ascii_downcase) == ($asset | ascii_downcase)
+      and .scheme == "exact"
+      and .extra.assetTransferMethod == "permit2"))
+  | first // empty
+' /tmp/x402-required.json > /tmp/x402-accepted.json
 ```
 
 `PAYMENT-REQUIRED` contains `accepts: [...]` because the server may advertise several payment options. The client `PAYMENT-SIGNATURE` payload sends one selected option as singular `accepted: {...}`.

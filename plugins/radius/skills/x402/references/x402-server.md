@@ -1,8 +1,39 @@
 # x402 Server-Side Implementation
 
-This reference provides everything needed to add x402 payment gating to any HTTP server. The core module is framework-agnostic — it takes a standard `Request` and returns a typed outcome that you map to your framework's response.
+Use `radiusPayments()` from `radius-sdk/hono` for Hono APIs. It builds the x402 v2 challenge, checks the facilitator's supported methods, and settles before the route handler runs by default.
 
-**Only dependency:** `viem` (for types only — the module itself uses only `fetch` and `atob`).
+```bash
+npm install radius-sdk hono
+```
+
+```typescript
+import { Hono } from 'hono';
+import { radiusPayments, type RadiusPaymentVariables } from 'radius-sdk/hono';
+
+type AppEnv = {
+  Bindings: { PAY_TO: `0x${string}` };
+  Variables: RadiusPaymentVariables;
+};
+
+const app = new Hono<AppEnv>();
+app.use('/api/*', radiusPayments<AppEnv>({
+  network: 'testnet',
+  payTo: (c) => c.env.PAY_TO,
+  routes: {
+    'GET /api/data': { price: '$0.001', description: 'One data request' },
+  },
+  // Optional: onSettled(receipt, c) records the facilitator's payment report.
+}));
+
+app.get('/api/data', (c) => c.json({ data: 'example', payer: c.get('radiusPayment')?.payer }));
+export default app;
+```
+
+The default `settle: 'before'` waits for settlement before running the handler. `settle: 'after'` runs the handler before settlement, so choose it only when that order is intended. The payment context and `PAYMENT-RESPONSE` report what the facilitator returned; use the transaction hash for on-chain reconciliation when the application needs independent proof. For other HTTP frameworks, adapt `@x402/core/server` or the Hono middleware; the custom implementation below is only a protocol illustration.
+
+## Advanced: manual protocol illustration
+
+This legacy framework-agnostic implementation is a protocol illustration, not a complete seller recipe. Its `asyncSettle` path has no facilitator result yet, and its `settled` outcome has only a facilitator report. The examples below keep protected content closed and return 202 until a separate receipt check completes.
 
 ---
 
@@ -243,7 +274,8 @@ export async function processPayment(
     return { status: 'settle-pending', verifyMs, totalMs: Date.now() - t0 };
   }
 
-  // Synchronous settle — wait for on-chain confirmation
+  // Synchronous facilitator call — still only a facilitator report until
+  // the transaction receipt is independently reconciled.
   const t1 = Date.now();
   let settleRes: Response;
   try {
@@ -329,7 +361,6 @@ After calling `processPayment()`, map every outcome to the correct HTTP response
 
 ```typescript
 async function handlePaidRequest(request: Request, config: X402Config): Promise<Response> {
-  const url = new URL(request.url);
   const outcome = await processPayment(config, request);
 
   switch (outcome.status) {
@@ -366,12 +397,12 @@ async function handlePaidRequest(request: Request, config: X402Config): Promise<
       );
 
     case 'settle-pending':
-      return jsonResponse({ message: 'Payment accepted', path: url.pathname }, 200, config);
+      return jsonResponse({ message: 'Settlement pending' }, 202, config);
 
     case 'settled':
-      // Payment accepted — return the paid content
-      // Replace with your application logic:
-      return jsonResponse({ message: 'Payment accepted', path: url.pathname }, 200, config, {
+      // A facilitator success report is not an independently checked chain receipt.
+      // This illustration has no receipt gate, so it does not release paid content.
+      return jsonResponse({ message: 'Settlement reported; receipt check pending', txHash: outcome.txHash }, 202, config, {
         'PAYMENT-RESPONSE': encodeBase64Json(outcome.settlementResponse),
       });
   }
@@ -382,17 +413,17 @@ async function handlePaidRequest(request: Request, config: X402Config): Promise<
 
 ## Agent checklist: gate an existing endpoint
 
-When adding x402 to an existing HTTP route, implement the payment behavior first and leave platform deployment to the user's Cloudflare, Wrangler, Railway, or hosting-specific skill.
+When adding x402 to a Hono route, use the SDK middleware above. The checklist below applies only when adapting the manual protocol illustration to another framework; it does not include the receipt gate needed to release protected content.
 
 Required endpoint behavior:
 - Create an `X402Config` with the correct Radius network, SBC asset, `payTo`, facilitator URL, and 6-decimal raw amount.
-- Call `processPayment(config, request)` before returning protected content.
+- Call `processPayment(config, request)` to inspect the facilitator outcome, then independently check the transaction receipt before returning protected content.
 - On `no-payment`, return HTTP 402 with `PAYMENT-REQUIRED: <base64-json>`.
 - On `invalid-header`, return HTTP 400.
 - On `verify-failed`, return HTTP 402 and a fresh `PAYMENT-REQUIRED` header.
 - On `verify-unreachable` or `settle-unreachable`, return HTTP 502.
 - On `settle-failed`, return HTTP 402 with `PAYMENT-RESPONSE: <base64-json>` containing facilitator failure details.
-- On `settled`, return protected content with `PAYMENT-RESPONSE: <base64-json>` containing settlement metadata.
+- On `settled`, keep the request pending until the transaction receipt is independently checked; this illustrative implementation returns 202 and does not release content.
 - Expose `PAYMENT-REQUIRED` and `PAYMENT-RESPONSE` in CORS headers for browser clients.
 - Do not choose deployment infrastructure from this skill. After local or existing-host endpoint behavior is correct, hand off deployment to the platform-specific skill. If the user explicitly asked to deploy, do not stop at "deployment is out of scope"; validate payment behavior first, then invoke or route to Cloudflare, Wrangler, Railway, or the appropriate deployment skill.
 
@@ -462,10 +493,8 @@ async function x402Gate(req: express.Request, res: express.Response, next: expre
   res.set(corsHeaders(config));
 
   if (outcome.status === 'settled' || outcome.status === 'settle-pending') {
-    if (outcome.status === 'settled') {
-      res.set('PAYMENT-RESPONSE', encodeBase64Json(outcome.settlementResponse));
-    }
-    next(); // Payment accepted — proceed to route handler
+    if (outcome.status === 'settled') res.set('PAYMENT-RESPONSE', encodeBase64Json(outcome.settlementResponse));
+    res.status(202).json({ status: 'settlement_pending_receipt_check' });
     return;
   }
 
@@ -490,9 +519,7 @@ async function x402Gate(req: express.Request, res: express.Response, next: expre
   }
 }
 
-app.get('/api/data', x402Gate, (req, res) => {
-  res.json({ data: 'your protected content here' });
-});
+// Add the protected route only after x402Gate has a successful receipt gate.
 ```
 
 ### Node.js http
@@ -528,11 +555,11 @@ createServer(async (req, res) => {
     res.end(JSON.stringify({}));
   } else if (outcome.status === 'settled') {
     res.setHeader('PAYMENT-RESPONSE', encodeBase64Json(outcome.settlementResponse));
-    res.writeHead(200);
-    res.end(JSON.stringify({ data: 'your protected content' }));
+    res.writeHead(202);
+    res.end(JSON.stringify({ status: 'settlement_pending_receipt_check' }));
   } else if (outcome.status === 'settle-pending') {
-    res.writeHead(200);
-    res.end(JSON.stringify({ data: 'your protected content' }));
+    res.writeHead(202);
+    res.end(JSON.stringify({ status: 'settlement_pending_receipt_check' }));
   } else if (outcome.status === 'verify-failed' || outcome.status === 'settle-failed') {
     if (outcome.status === 'settle-failed') {
       res.setHeader('PAYMENT-RESPONSE', encodeBase64Json(outcome.detail));
@@ -576,7 +603,7 @@ async function handleRequest(request: Request, baseConfig: X402Config): Promise<
 
 ## Async settlement
 
-For lower latency, return data before on-chain settlement confirms. The facilitator still settles in the background.
+`asyncSettle` returns `settle-pending` before a facilitator result exists. Treat it as pending and keep the protected handler closed. The default SDK seller flow uses `settle: 'before'`.
 
 ```typescript
 // Cloudflare Workers — use ctx.waitUntil for background settle
@@ -587,12 +614,7 @@ const outcome = await processPayment(
   ctx, // ExecutionContext
 );
 
-// Node.js — async settle runs as a floating promise (acceptable here because
-// the facilitator is responsible for settlement, and failure doesn't affect
-// the already-verified payment)
-const outcome = await processPayment(
-  config,
-  request,
-  { asyncSettle: true },
-);
+if (outcome.status === 'settle-pending') {
+  return new Response('Settlement pending', { status: 202 });
+}
 ```
