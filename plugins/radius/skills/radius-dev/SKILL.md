@@ -1,6 +1,6 @@
 ---
 name: radius-dev
-description: End-to-end Radius Network development playbook. Stablecoin-native EVM with sub-second finality. Uses plain viem (defineChain, createPublicClient, createWalletClient) for all TypeScript integration. wagmi for React wallet integration. Foundry for smart contract development and testing. Also covers Hardhat/ethers.js compatibility and EIP-7966 synchronous transactions. Micropayment patterns (pay-per-visit content, real-time API metering, streaming payments), x402 protocol integration, Radius x402 facilitators (Permit2 + EIP-2612), stablecoin-native fees via Turnstile, ERC-20 operations, event watching, production gotchas, and EVM compatibility differences from Ethereum.
+description: Develop on Radius with radius-sdk for x402 payments, balances, ERC-20 and Permit2 actions, radius-cli for terminal wallets, viem for general EVM work, wagmi for React, and Foundry for contracts. Covers network configuration, Turnstile fees, events, and Radius EVM differences.
 published: true
 user-invocable: true
 ---
@@ -24,12 +24,12 @@ Use this Skill when the user asks for:
 
 ## Default stack decisions (opinionated)
 
-1) **TypeScript: viem (directly, no wrapper SDK)**
-- Use `defineChain` from viem to create the Radius chain definition.
-- Use `createPublicClient` for reads, `createWalletClient` for writes.
-- Use viem's native `watchContractEvent`, `getLogs`, and `watchBlockNumber` for event monitoring.
-- Do NOT use `@radiustechsystems/sdk` — it is deprecated. Use plain viem for everything.
-- ethers.js v6 also works with no overrides. This skill defaults to viem for examples.
+1) **TypeScript: radius-sdk for Radius payments and actions; viem for general EVM work**
+- Use `radius-sdk/hono` for Hono x402 seller middleware and `radius-sdk/client` for paying fetch, balances, ERC-20, Permit2, and transfer watching. Install the peer dependency for the entry point used (`hono` or `viem`).
+- Import network definitions, amounts, and receipt helpers from `radius-sdk`.
+- Use viem `createPublicClient` and `createWalletClient` for other contract reads and writes, with `radiusTestnet.chain` or `radiusMainnet.chain` from the SDK. Define a chain directly when an app cannot use the SDK.
+- `@radiustechsystems/sdk` is the deprecated package; it is distinct from `radius-sdk`.
+- ethers.js v6 also works for general EVM interactions.
 
 2) **UI: wagmi + @tanstack/react-query for React apps**
 - Define the Radius chain via `defineChain` and pass it to wagmi's `createConfig`.
@@ -100,10 +100,9 @@ wallet handling.
   ```
   `--x402-threshold` is a display-unit limit such as SBC, not a raw 6-decimal
   integer. Do not omit it in automated agent flows.
-- **App code and embedded integrations:** use viem directly
-  (`createPublicClient`, `createWalletClient`, `privateKeyToAccount`) and load
-  keys from environment variables or a secrets manager. Never inline or log
-  private keys.
+- **App code and embedded integrations:** use `radius-sdk` for its Radius
+  payment and token actions, with viem clients where needed. Load keys from
+  environment variables or a secrets manager. Never inline or log private keys.
 - **Smart contract development and advanced EVM workflows:** use Foundry
   (`forge`/`cast`) for contract builds, tests, deployment scripts, low-level
   contract reads, and debugging. Foundry is no longer the default agent wallet
@@ -204,21 +203,21 @@ Standard ERC-20 interactions, storage operations, and events work unchanged.
 
 ### 2. Pick the right building blocks
 - UI: wagmi + Radius chain via `defineChain` + React hooks
-- Scripts/backends: plain viem (`createPublicClient`, `createWalletClient`, `defineChain`)
+- Scripts/backends: `radius-sdk/client` for Radius payment, balance, token, and transfer actions; viem clients for other EVM work
 - Smart contracts: Foundry (`forge` / `cast`) + OpenZeppelin
 - Agent wallet and terminal execution: `radius-cli`
-- Micropayments: viem + server-side verification + wallet integration
-- x402: Middleware pattern with Radius facilitator for settlement (Permit2 or EIP-2612) — see the **x402** skill for full implementation details
+- Micropayments: `radius-sdk/hono` and `radius-sdk/client` for x402; viem for direct on-chain patterns
+- x402: use the SDK's buyer and seller APIs; see the **x402** skill for implementation details
 
 ### 3. Implement with Radius-specific correctness
 Always be explicit about:
-- Defining the Radius chain with `defineChain`
-- Using `createPublicClient` for reads and `createWalletClient` for writes (plain viem)
+- Using the SDK's network definitions when the SDK is installed, or defining a Radius chain with `defineChain` for plain viem integrations
+- Using `createPublicClient` for reads and `createWalletClient` for writes when working directly with viem
 - Stablecoin fee model (no ETH needed, no gas price bidding)
 - Sub-second finality (no need to wait for multiple confirmations)
 - SBC uses 6 decimals (use `parseUnits(amount, 6)`, NOT `parseEther`)
 - RUSD (native token) uses 18 decimals (use `parseEther` for native transfers)
-- The wallet convention above: `radius-cli`/`RADIUS_HOME` for local agent wallets and terminal execution, viem for app code, Foundry for smart-contract workflows, and no raw keys in agent-visible CLI arguments
+- The wallet convention above: `radius-cli`/`RADIUS_HOME` for local agent wallets and terminal execution, SDK plus viem for app code, Foundry for smart-contract workflows, and no raw keys in agent-visible CLI arguments
 - Gas price from `eth_gasPrice` RPC (viem handles this automatically via the chain definition)
 
 ### 4. Watch for production gotchas

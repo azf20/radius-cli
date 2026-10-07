@@ -415,7 +415,7 @@ async function main() {
   }
   const body = await paidRes.text();
 
-  if (paidRes.status !== 200) {
+  if (!paidRes.ok) {
     console.log('status=failed');
     console.log(`http_status=${paidRes.status}`);
     console.log(`error=payment_rejected`);
@@ -425,6 +425,24 @@ async function main() {
     process.exit(1);
   }
 
+  const txHash = settlement?.transaction ?? settlement?.txHash;
+  if (settlement?.success !== true || settlement?.network !== expectedNetwork || !/^0x[0-9a-fA-F]{64}$/.test(txHash ?? '')) {
+    console.log('status=unconfirmed');
+    console.log(`http_status=${paidRes.status}`);
+    console.log('error=missing_or_invalid_payment_receipt');
+    console.log('');
+    console.log(body);
+    process.exit(1);
+  }
+
+  let receipt;
+  try {
+    receipt = await publicClient.waitForTransactionReceipt({ hash: txHash, timeout: 30_000 });
+  } catch (err) {
+    fail('settlement_receipt_unavailable', err?.message ?? String(err));
+  }
+  if (receipt.status !== 'success') fail('settlement_reverted', txHash);
+
   console.log('status=paid');
   console.log(`http_status=${paidRes.status}`);
   console.log(`payer=${account.address}`);
@@ -432,8 +450,7 @@ async function main() {
   console.log(`paid_to=${accepted.payTo}`);
   console.log(`network=${expectedNetwork}`);
   console.log(`permit_nonce=${permitNonce.toString()}`);
-  const txHash = settlement?.transaction ?? settlement?.txHash;
-  if (txHash) console.log(`tx_hash=${txHash}`);
+  console.log(`tx_hash=${txHash}`);
   console.log('');
   console.log(body);
 }

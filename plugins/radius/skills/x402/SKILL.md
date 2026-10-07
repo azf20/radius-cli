@@ -7,7 +7,8 @@ description: |
   implement EIP-2612 permit + Permit2 payment signing, build pay-per-call services on Radius
   using SBC token, or set up x402 middleware. Covers both server-side (protect your endpoints
   with payment gating) and client-side (sign and pay for x402-protected endpoints). Use
-  `radius-cli wallet x402` for agent/CLI endpoint consumption and viem for app-code signing.
+  `radius-cli wallet x402` for terminal consumption, `radius-sdk/client` for app buyers,
+  and `radius-sdk/hono` for Hono sellers.
 published: true
 user-invocable: true
 ---
@@ -30,7 +31,7 @@ Use this Skill when the user asks to:
 
 ## Protocol overview
 
-x402 is an HTTP-native micropayment protocol. Payments happen via off-chain permit signatures settled by a facilitator — no on-chain transaction from the client.
+x402 is an HTTP-native micropayment protocol. The buyer signs a payment authorization; a facilitator submits settlement. A buyer may also need a one-time on-chain Permit2 approval when gas sponsoring is unavailable. The SDK selects the compatible signing method from the server's challenge.
 
 ```
 Client                          Server                         Facilitator
@@ -39,8 +40,8 @@ Client                          Server                         Facilitator
   │                               │                               │
   │<── 402 + PAYMENT-REQUIRED ────│                               │
   │                               │                               │
-  │  (sign EIP-2612 permit +      │                               │
-  │   Permit2 authorization)      │                               │
+  │  (sign compatible offer;      │                               │
+  │   approval if required)       │                               │
   │                               │                               │
   │─── GET /api/data              │                               │
   │    PAYMENT-SIGNATURE ────────>│                               │
@@ -51,11 +52,7 @@ Client                          Server                         Facilitator
   │<── 200 + data + PAYMENT-RESPONSE ─│
 ```
 
-The client signs two permits (never sends a transaction):
-1. **EIP-2612 permit** — approves the Permit2 contract to spend SBC
-2. **Permit2 PermitWitnessTransferFrom** — authorizes the token transfer via the x402 Proxy
-
-The facilitator executes both on-chain in a single settlement transaction.
+For a v2 `exact` Permit2 offer with `eip2612GasSponsoring`, the buyer signs an EIP-2612 permit for the one-time approval and a Permit2 transfer authorization. Without sponsoring, the SDK can send an approval transaction. Other supported offers use different signatures: v2 `exact` may use EIP-3009, v2 `upto` uses Permit2, and v1 `exact` uses EIP-3009. `upto` authorizes a maximum; the actual charge comes from the payment receipt. Use the SDK to select and encode the offered method.
 
 HTTP x402 v2 carries protocol data in headers:
 - `PAYMENT-REQUIRED` — server to client, base64-encoded payment requirements
@@ -182,7 +179,7 @@ Radius-operated facilitators support EIP-2612 gas sponsoring for first-time wall
 Follow the shared Radius wallet convention from the **radius-dev** skill:
 
 - Fresh one-shot agent demos and terminal access should use `radius-cli wallet x402`.
-- App-code clients may load key material from environment variables or a secrets manager for viem signing.
+- App-code clients should use `createRadiusFetch()` with a viem account or wallet client. Store any key material in the application's secrets system.
 - [x402-cli-cast.md](references/x402-cli-cast.md) and `scripts/x402-pay.mjs` are legacy/specialized references for environments that cannot use `radius-cli`.
 - Never request, log, hardcode, or pass raw private keys as CLI arguments such as `--private-key`.
 
@@ -190,14 +187,12 @@ Follow the shared Radius wallet convention from the **radius-dev** skill:
 
 ### A. "I want to monetize my API with x402" (server-side)
 
-1. **Install viem** — `npm install viem` (the only dependency)
-2. **Create your x402 payment module** — copy the `processPayment()` pattern from [x402-server.md](references/x402-server.md)
-3. **Wire into your request handler** — call `processPayment()` for protected routes; it returns a typed outcome you map to HTTP responses
-4. **Set environment variables** — `PAYMENT_ADDRESS` (your wallet) and optionally `FACILITATOR_API_KEY`
-5. **Test the endpoint behavior** — `curl` your local or already-hosted endpoint to verify it returns 402 with correct requirements
-6. **Handle all outcome states** — see the exhaustive switch in [x402-server.md](references/x402-server.md)
-7. **Get discovered** — register your service with x402 discovery endpoints so agents and buyers can find it programmatically. Facilitators that implement the `/discovery/resources` convention serve a machine-readable catalog of available services. See [x402-client.md § Discovering services](references/x402-client.md#discovering-x402-services) for the response format and known discovery endpoints.
-8. **Deploy separately if needed** — after local or existing-host validation, invoke the user's Cloudflare, Wrangler, Railway, or platform-specific skill to deploy. Do not stop at "deployment is out of scope" when the user explicitly asks for deployment; hand off after the x402 behavior is correct.
+1. **Install the seller dependencies** — `npm install radius-sdk hono`.
+2. **Configure `radiusPayments()`** from `radius-sdk/hono` with an explicit network, recipient, route, and price. Follow the runnable [seller example](references/x402-server.md).
+3. **Test the endpoint behavior** — `curl` your local or already-hosted endpoint to verify it returns 402 with the intended requirements.
+4. **Handle settled requests** — the default `settle: 'before'` runs the handler after settlement. Record the payment context or use `onSettled` where the application needs it.
+5. **Get discovered** — register your service with x402 discovery endpoints so agents and buyers can find it programmatically. Facilitators that implement the `/discovery/resources` convention serve a machine-readable catalog of available services. See [x402-client.md § Discovering services](references/x402-client.md#discovering-x402-services) for the response format and known discovery endpoints.
+6. **Deploy separately if needed** — after local or existing-host validation, invoke the user's Cloudflare, Wrangler, Railway, or platform-specific skill to deploy. Do not stop at "deployment is out of scope" when the user explicitly asks for deployment; hand off after the x402 behavior is correct.
 
 ### B. "I want to consume a paid x402 API" (client-side)
 
@@ -238,10 +233,8 @@ network defaults for a local or custom environment.
 
 1. **Discover services** — query `/discovery/resources` endpoints to find available x402 services programmatically. See [x402-client.md § Discovering services](references/x402-client.md#discovering-x402-services) for code and known endpoints. Any HTTP endpoint that returns 402 with a `PAYMENT-REQUIRED` header is also an x402 service — the 402 response itself is a discovery mechanism.
 2. **Request the endpoint** — receive 402 with payment requirements in the `PAYMENT-REQUIRED` header
-3. **Parse the requirements** — base64-decode `PAYMENT-REQUIRED` with `parsePaymentRequired()` from [x402-client.md](references/x402-client.md) and select the `accepts[i]` whose `network` matches your wallet's chain (do not blindly pick `accepts[0]`)
-4. **Sign and pay** — for one-shot agent runs use `radius-cli wallet x402`; for app code, use `signX402Payment()` from [x402-client.md](references/x402-client.md)
-5. **Retry with payment** — set the `PAYMENT-SIGNATURE` header to the base64-encoded payload
-6. **Receive data** — 200 response with the paid content
+3. **Use the SDK for app code** — call `createRadiusFetch()` from `radius-sdk/client` with `signer`, `network`, and the required `maxPerRequest`. The client chooses a compatible offer and signs the correct payload. See [x402-client.md](references/x402-client.md).
+4. **Inspect the result** — read `getPaymentReceipt(response, payFetch.network)` and reconcile the transaction when settlement evidence is required. An HTTP 2xx response alone is not payment proof.
 
 ### Environment variables
 
@@ -263,10 +256,10 @@ network defaults for a local or custom environment.
 | **Permit2 spender (critical)** | Using Permit2 contract or payTo | Spender = **x402 Proxy** (`0x4020...0001`). This is the field the facilitator always validates. |
 | EIP-2612 domain name | `"SBC"` or `"Stablecoin"` | `"Stable Coin"` (exact, with space). Matters for first payment from a wallet (establishes Permit2 allowance on-chain). |
 | EIP-2612 spender | Using payTo address or x402 Proxy | Spender = **Permit2 contract** (`0x0000...8BA3`). Matters for first payment. |
-| Only signing one permit | Sign just EIP-2612 or just Permit2 | Must sign **both** — EIP-2612 + Permit2. The EIP-2612 establishes Permit2 allowance; Permit2 authorizes the transfer. |
-| **EIP-2612 `value` ≠ payment `amount`** | `value: 2n**256n - 1n` (max uint256) | `value` must equal `accepts[0].amount`. The Radius x402 Proxy reverts `Permit2612AmountMismatch()` (selector `0x050cda49`); facilitator still reports `success: true`, so the failure is silent unless you check the on-chain receipt. |
+| Assuming every offer needs two signatures | Always sign EIP-2612 + Permit2 | Follow the advertised version, scheme, and transfer method. A sponsored Permit2 offer uses both signatures; EIP-3009 and other offers differ. |
+| **EIP-2612 `value` ≠ selected payment `amount`** | `value: 2n**256n - 1n` (max uint256) | For a sponsored Permit2 offer, `value` must equal the selected requirement's `amount`. The Radius x402 Proxy can revert `Permit2612AmountMismatch()`; reconcile the on-chain receipt. |
 | Wrong network facilitator | Using the mainnet facilitator for testnet or the testnet facilitator for mainnet | Use `https://facilitator.radiustech.xyz` for `eip155:723487` and `https://facilitator.testnet.radiustech.xyz` for `eip155:72344` |
-| Third-party first-time wallet | Assuming every facilitator sponsors first-time EIP-2612 Permit2 allowance setup | Check `/supported`; if gas sponsoring is unavailable, pre-approve Permit2 via `permit()` on SBC before first payment |
+| Third-party first-time wallet | Assuming every facilitator sponsors first-time Permit2 approval | Check `/supported`; if sponsoring is unavailable, use the SDK's approval flow or an explicit Permit2 approval transaction before payment |
 | Address casing | Comparing addresses with `===` | Always compare case-insensitively or normalize with viem's `getAddress()` |
 | Missing EIP-2612 nonce | Hardcoding nonce to 0 | Read from token: `nonces(address)` on SBC contract |
 | Permit2 nonce | Sequential nonce | Random nonce (crypto random bytes) |
@@ -294,8 +287,8 @@ network defaults for a local or custom environment.
 - Full Radius docs corpus: fetch `https://docs.radiustech.xyz/llms-full.txt`
 
 **Local references:**
-- Server-side implementation: [x402-server.md](references/x402-server.md)
-- App client signing with viem/browser wallets: [x402-client.md](references/x402-client.md)
+- SDK Hono seller implementation and advanced protocol reference: [x402-server.md](references/x402-server.md)
+- SDK app buyer implementation and advanced signing reference: [x402-client.md](references/x402-client.md)
 - Legacy one-off CLI payment access with curl + cast: [x402-cli-cast.md](references/x402-cli-cast.md)
 - Facilitator API reference: [facilitator-api.md](references/facilitator-api.md)
 

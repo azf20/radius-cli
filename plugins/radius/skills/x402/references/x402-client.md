@@ -1,20 +1,50 @@
 # x402 Client-Side Implementation
 
-This reference provides everything needed to consume x402-protected APIs — sign payment permits and send them with your requests.
+Use `createRadiusFetch()` for application buyers. It selects a compatible offer for the configured Radius network and asset, enforces a required per-request price ceiling, signs the offered method, and handles the paid retry.
 
-**Only dependency:** `viem`
+```bash
+npm install radius-sdk viem
+```
+
+```typescript
+import { createRadiusFetch, getPaymentReceipt } from 'radius-sdk/client';
+import { privateKeyToAccount } from 'viem/accounts';
+
+const buyer = createRadiusFetch({
+  network: 'testnet',
+  signer: privateKeyToAccount(process.env.RADIUS_PRIVATE_KEY as `0x${string}`),
+  maxPerRequest: '$0.05',
+  // Optional: onPaymentRequired: (offer) => offer.payTo === trustedSeller,
+});
+
+const response = await buyer('https://seller.example/api/data');
+const payment = getPaymentReceipt(response, buyer.network);
+if (!response.ok || !payment?.success) {
+  throw new Error('The paid response has no successful payment receipt');
+}
+// Reconcile payment.transaction with buyer.getSettlement(transaction) when
+// independent on-chain confirmation is required before recording payment.
+```
+
+`maxPerRequest` limits each authorization, including the maximum for `upto`; it is not a cumulative budget. A facilitator's payment response is a report, so keep the transaction hash for reconciliation. `onPaymentRequired` receives the selected network, asset, recipient, amount, version, scheme, and transfer method before signing. A buyer may need a one-time Permit2 approval when sponsoring is absent; the SDK supports `onApprovalRequired` and `permit2Approval: 'never'`.
+
+The SDK supports v1 `exact` via EIP-3009, v2 `exact` via EIP-3009 or Permit2, and v2 `upto` via Permit2. The Radius facilitator currently advertises v2 `exact` Permit2; inspect the server's challenge for other endpoints. The manual example below covers only a sponsored v2 `exact` Permit2 offer.
+
+## Advanced: manual Permit2 protocol illustration
+
+Use the following typed-data details to inspect or debug the protocol. The hand-written client examples below do not cover every SDK-supported scheme and do not establish settlement from HTTP 200 alone.
 
 ---
 
 ## Why two signatures?
 
-x402 on Radius uses a **dual-signature** Permit2 flow. The client never sends a transaction — it signs two EIP-712 typed data messages:
+For a sponsored v2 `exact` Permit2 offer, the client signs two EIP-712 typed data messages:
 
 1. **EIP-2612 permit** — tells the SBC token contract: "I approve the Permit2 contract to spend X amount of my SBC." The spender is the **Permit2 contract** (`0x0000...8BA3`).
 
 2. **Permit2 PermitWitnessTransferFrom** — tells the Permit2 contract: "I authorize the x402 Proxy to transfer X SBC from me to the payment recipient." The spender is the **x402 Proxy** (`0x4020...0001`).
 
-The facilitator receives both signatures and executes them on-chain in a single settlement transaction.
+The facilitator uses the signatures during settlement. Without sponsoring, a one-time on-chain Permit2 approval may be required instead of the EIP-2612 signature.
 
 ---
 
@@ -521,7 +551,7 @@ After sending the `PAYMENT-SIGNATURE` header, the server may still return non-20
 
 | Status | Meaning | Action |
 |--------|---------|--------|
-| 200 | Payment accepted | Parse response body as normal |
+| 200 | HTTP request succeeded | Inspect `PAYMENT-RESPONSE` and reconcile its transaction before claiming settlement |
 | 400 | Malformed PAYMENT-SIGNATURE header | Check base64 encoding, JSON structure |
 | 402 | Payment verification failed | Requirements may have changed — re-fetch 402 and re-sign |
 | 502 | Facilitator unavailable | Retry after a short delay |
