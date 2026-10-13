@@ -1,0 +1,6 @@
+---
+// Rendered per request, so the middleware sees every request: the recommended setup for a gated route.
+export const prerender = false;
+const { slug } = Astro.params;
+---
+<html><body><article>CONTENT:ssr:{slug}</article></body></html>
