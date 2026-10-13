@@ -4,8 +4,10 @@ The `radius-dev` Claude Code plugin provides four skills:
 
 - `radius-dev` for Radius Network application development
 - `x402` for paying x402 endpoints (agents, terminals, app buyers) and the protocol
-- `sell-api` for charging for an API: framework detection, `radius-sdk` seller
-  setup, and verification with `radius-cli sell check`
+- `sell-api` for charging for an API or for articles and pages (including
+  charging AI crawlers while readers stay free): framework detection, `radius-sdk`
+  seller setup for Hono, Express, Next.js and Astro middleware, and Workers in
+  front of an origin, and verification with `radius-cli sell check`
 - `dripping-faucet` for testnet faucet workflows
 
 The SDK examples target `radius-sdk` 0.3.0 or later (`sell-api` targets 0.5.0

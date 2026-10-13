@@ -111,7 +111,15 @@ const SKILL_FILE_ORDER: Record<string, string[]> = {
     'gotchas.md',
     'resources.md',
   ],
-  'sell-api': ['SKILL.md', 'frameworks.md', 'protocols.md', 'networks-facilitators.md', 'settlement.md', 'gotchas.md'],
+  'sell-api': [
+    'SKILL.md',
+    'frameworks.md',
+    'publishers.md',
+    'protocols.md',
+    'networks-facilitators.md',
+    'settlement.md',
+    'gotchas.md',
+  ],
 };
 
 /** Return the preferred file order for a skill, defaulting to SKILL.md-first. */

@@ -1,6 +1,6 @@
 ---
 name: sell-api
-description: Monetize an API on Radius with radius-sdk. Use when the user wants to charge for HTTP endpoints, add per-request payments or a paywall, gate routes behind HTTP 402, accept x402 or MPP payments, or sell API access in a TypeScript app on Hono, Express, Next.js, Cloudflare Workers, Bun, Deno or Node. Covers framework detection, install, configuration (network, price, recipient, facilitator, settlement order, MPP), local runs, verification with radius-cli sell check, known SDK gotchas, and the hand-off to a deployment skill.
+description: Monetize an API or web content on Radius with radius-sdk. Use when the user wants to charge for HTTP endpoints, articles or pages, add per-request payments or a paywall, gate routes behind HTTP 402, charge AI crawlers and agents while readers stay free (publisher, CMS site, pay-per-crawl), accept x402 or MPP payments, or sell access in a TypeScript app on Hono, Express, Next.js (middleware, proxy or route handlers), Astro (middleware), a Cloudflare Worker or Fastly Compute service in front of an origin, Bun, Deno or Node. Covers framework detection, install, configuration (network, price, recipient, facilitator, settlement order, MPP), who pays and who reads free, CDN caching, local runs, verification with radius-cli sell check, known SDK gotchas, and the hand-off to a deployment skill.
 published: true
 user-invocable: true
 ---
@@ -12,6 +12,7 @@ user-invocable: true
 Use this Skill when the user wants to **get paid** for HTTP requests:
 
 - Charge per request for an endpoint ("monetize my API", "add a paywall", "make this route cost $0.01")
+- Charge AI crawlers and agents for articles or pages on a publisher or CMS site, keeping human readers free ("pay-per-crawl", "charge GPTBot", "gate my articles")
 - Add x402 payment gating (HTTP 402 + `PAYMENT-REQUIRED`) or MPP (`WWW-Authenticate: Payment`) to a TypeScript app
 - Accept Radius SBC, optionally Base USDC, through a facilitator
 - Check or debug a seller's 402 before deploying it
@@ -31,15 +32,21 @@ Use this Skill when the user wants to **get paid** for HTTP requests:
 
 ### 1. Detect the framework
 
-Read `package.json` (and the entry file) and pick the wrapper. Details and full examples: [frameworks.md](references/frameworks.md).
+Read `package.json` (and the entry file) and pick the wrapper. Details and full examples: [frameworks.md](references/frameworks.md). For a site that sells articles or pages, also read [publishers.md](references/publishers.md) before writing code.
 
 | The project uses | Seller API | Install | MPP |
 | --- | --- | --- | --- |
 | Hono (incl. on Workers, Bun, Node via `@hono/node-server`) | `radiusPayments` from `radius-sdk/hono`, as `app.use(...)` | `radius-sdk hono` | yes |
-| No framework: Workers `fetch`, Bun/Deno `serve`, Node 22 `Request`/`Response`, Next.js / SvelteKit / Remix / Astro route handlers | `radiusPayments` from `radius-sdk/server`: `pay.wrap(handler)` or `pay(request, handler)` | `radius-sdk` | yes |
+| No framework: Workers `fetch`, Bun/Deno `serve`, Node 22 `Request`/`Response`, SvelteKit / Remix route handlers, Next.js / Astro API routes | `radiusPayments` from `radius-sdk/server`: `pay.wrap(handler)` or `pay(request, handler)` | `radius-sdk` | yes |
+| Next.js pages or articles (`middleware.ts` on Next 15, `proxy.ts` on Next 16; edge or Node runtime) | `radiusPayments` in the middleware: `pay(publicRequest(req), () => NextResponse.next())` | `radius-sdk` | yes |
+| Astro with a server adapter (`astro.config.*` with `output: 'server'` or an adapter) | `radiusPayments` in `src/middleware.ts`, **with the prerender guard**. Prerendered pages are not gated | `radius-sdk` | yes |
+| A CMS or site you cannot change, behind Cloudflare (`wrangler.toml`) | A Worker in front of the origin: `pay(request, () => fetch(origin))` | `radius-sdk` | yes |
+| Fastly Compute (`fastly.toml`) | The same, with an `AbortSignal` shim (hand-tested only). Fastly VCL-only services cannot run it: gate in the origin framework | `radius-sdk` | yes |
 | Express | `createRadiusServer` from `radius-sdk/server` + `paymentMiddleware` from `@x402/express` | `radius-sdk @x402/express express` | no |
-| Next.js middleware/proxy | `createRadiusServer` + `@x402/next` (**not covered by this repo's tests**; prefer route handlers with `radius-sdk/server`) | `radius-sdk @x402/next` | no |
+| Next.js 16.2.6 or later, x402 only | `createRadiusServer` + `@x402/next` (**not covered by this repo's tests**; on Next 15 it cannot be used) | `radius-sdk @x402/next` | no |
 | Anything else | Ask, or put a web-standard handler in front (`radius-sdk/server`) | | |
+
+Content sites: the gate must run before any CDN cache, and charge only pages that exist ([publishers.md](references/publishers.md)). Decide who pays: every request that matches a route, or only agents (a condition wrapper, section 2 there).
 
 ### 2. Install
 
@@ -72,6 +79,7 @@ app.get('/api/report', (c) => c.json({ report: 'quarterly-sales', paidBy: c.get(
 - Dynamic `price` / `payTo` are functions of the request (`Request`, Hono context, or x402 context on Express).
 - `mpp: { secretKey: process.env.MPP_SECRET_KEY }` (32+ random characters, the same on every instance) also accepts MPP on `radiusPayments`/Hono. See [protocols.md](references/protocols.md).
 - Networks, facilitators, API keys, Base: [networks-facilitators.md](references/networks-facilitators.md). Settlement order, `onSettled`, paid errors, replays: [settlement.md](references/settlement.md).
+- Charging only agents, subscribers and paywalls, CDN cache rules, discovery: [publishers.md](references/publishers.md).
 
 ### 4. Run locally
 
@@ -93,11 +101,13 @@ It requests the route without paying, decodes the x402 challenge and any MPP cha
 
 `sell check` ships in `radius-cli` 0.5.0. If `radius-cli sell --help` fails, fall back to `curl -i` and decode the header (a GET, not `curl -I`: HEAD can bypass the route): `curl -s -o /dev/null -D - URL | grep -i '^payment-required:' | cut -d' ' -f2 | tr -d '\r' | base64 -d`.
 
+To check a gate that charges only some clients, pass the header: `radius-cli sell check URL -H 'User-Agent: GPTBot/1.1'` should pass, and the same command with a browser User-Agent should fail (a human is served free). `sell check` does not look at CDN caching.
+
 For an end-to-end proof on testnet, a funded `radius-cli` wallet can pay once: `RADIUS_HOME=.radius radius-cli sell check URL --pay --threshold 0.01` (testnet unless `--network mainnet` is given). Only do this when the user asks for a real payment; never on mainnet without explicit instruction.
 
 ### 6. Deploy (optional hand-off)
 
-After step 5 passes locally, hand deployment to the platform skill (Cloudflare/Wrangler, Railway, Vercel, …). Carry over: `PAY_TO`, `MPP_SECRET_KEY` (secret), facilitator URL/API key, and `network`. Behind a TLS proxy make the app see the public URL (`trust proxy` on Express), or `resource.url` will name `http://`. Re-run `radius-cli sell check https://<deployed>/api/report` against the deployed URL. Do not stop at "deployment is out of scope" when the user asked to deploy.
+After step 5 passes locally, hand deployment to the platform skill (Cloudflare/Wrangler, Railway, Vercel, …). Carry over: `PAY_TO`, `MPP_SECRET_KEY` (secret), facilitator URL/API key, and `network`. Behind a TLS proxy make the app see the public URL (`trust proxy` on Express; `publicRequest` in Next middleware and `security.allowedDomains` on Astro 5, see gotchas), or `resource.url` will name `http://` or `localhost`. Re-run `radius-cli sell check https://<deployed>/api/report` against the deployed URL. Do not stop at "deployment is out of scope" when the user asked to deploy.
 
 ## Gotchas (read before shipping)
 
@@ -108,7 +118,11 @@ Current SDK behavior with mitigations, from the seller evaluation suite: [gotcha
 | `network` omitted | It is Radius **mainnet**. Name `'testnet'` or `'mainnet'`. |
 | Paid handler registered before the middleware | Served free. `app.use(...)` first. |
 | Unpaid `HEAD` on a paid `GET` runs the handler | Add `'HEAD /path'` with the same price, or refuse HEAD. |
-| `'before'` mode and a 404/500 from the handler | Still paid. Validate inputs before charging. |
+| `'before'` mode and a 404/500 from the handler | Still paid. Validate inputs before charging. In Next and Astro middleware a missing page is paid, and `settle: 'after'` does not help in Next: charge only known pages. |
+| Astro prerendered page | Not gated, and an unguarded middleware writes the 402 into the built HTML. Use `prerender = false` and the guard. |
+| `resource.url` says `localhost` behind a proxy (`next start`, Astro 5) | Rebuild the request from `x-forwarded-host` (Next), set `security.allowedDomains` (Astro 5). |
+| Origin sends `Surrogate-Control` / `CDN-Cache-Control` | They pass through on paid responses. Strip them in the Worker and gate before the cache. |
+| Fastly Compute: `AbortSignal is not defined` | Add the shim from frameworks.md. |
 | Hono handler sets `Cache-Control` | It replaces the SDK's `private`. Set `private` yourself. |
 | `'after'` mode, failed settlement | Body withheld, handler headers leak (Hono, Express). Keep `'before'`. |
 | Wildcard route priced once | A payment for `/api/x` unlocks `/api/y` at the same price. Price routes by value. |
@@ -118,7 +132,8 @@ Current SDK behavior with mitigations, from the seller evaluation suite: [gotcha
 ## Progressive disclosure
 
 **Local references:**
-- Framework wrappers with full examples (Hono, web-standard, Express, Next.js): [frameworks.md](references/frameworks.md)
+- Framework wrappers with full examples (Hono, web-standard, Express, Next.js middleware, Astro middleware, Worker and Fastly Compute in front of an origin): [frameworks.md](references/frameworks.md)
+- Publishers: charging agents but not humans, CDN caching, paywalls, discovery, missing pages: [publishers.md](references/publishers.md)
 - x402 v2 `exact` and MPP on the seller: [protocols.md](references/protocols.md)
 - Networks, facilitators, API keys, custom clients: [networks-facilitators.md](references/networks-facilitators.md)
 - Settlement order, receipts, paid errors, replays: [settlement.md](references/settlement.md)

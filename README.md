@@ -23,7 +23,7 @@ Run its local, unfunded evaluation with `pnpm eval:payments`, its agent decision
 ## Agent skills
 
 The [Radius Claude Code plugin](plugins/radius) contains the `radius-dev`, `x402`
-(paying), `sell-api` (charging for an API), and `dripping-faucet` skills. The marketplace manifest is at
+(paying), `sell-api` (charging for an API or for articles and pages), and `dripping-faucet` skills. The marketplace manifest is at
 [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json). These files
 live outside `packages/*`. The plugin has its own version in
 [`plugins/radius/.claude-plugin/plugin.json`](plugins/radius/.claude-plugin/plugin.json)

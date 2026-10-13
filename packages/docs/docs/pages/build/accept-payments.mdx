@@ -116,7 +116,7 @@ app.get('/api/lookup', (_request, response) => response.json({ result: 'ok' }));
 app.listen(8787);
 ```
 
-The SDK provides Radius pricing and settlement; the adapter provides the framework integration. `@x402/next` and `@x402/hono` can use the same resource server. Dynamic price and recipient functions receive the x402 request context. See [createRadiusServer](/reference/radius-sdk#createradiusserver) for initialization and callback details.
+The SDK provides Radius pricing and settlement; the adapter provides the framework integration. `@x402/next` (Next.js 16.2.6 or later, x402 only) and `@x402/hono` can use the same resource server. To gate pages in Next.js or Astro middleware, or from a Worker in front of an existing site, use `radiusPayments` from `radius-sdk/server` as in the [`sell-api` skill](https://docs.radiustech.xyz/skills/sell-api.md). Dynamic price and recipient functions receive the x402 request context. See [createRadiusServer](/reference/radius-sdk#createradiusserver) for initialization and callback details.
 
 ## Set prices
 
