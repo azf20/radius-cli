@@ -1,0 +1,107 @@
+name: Agent payment evals
+
+# Manual only. Builds the CLI and SDK from the selected ref and runs the agent payment
+# evaluation (evaluations/agent-payments/README.md). The offline and agent suites are
+# unfunded. The testnet proof spends 0.001 SBC per run, so it runs only when requested.
+on:
+  workflow_dispatch:
+    inputs:
+      live:
+        description: Also run the funded testnet proof (spends 0.001 SBC plus network fees)
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  offline:
+    name: Offline and agent evals
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6 # reads the version from package.json#packageManager
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run offline evaluation
+        run: pnpm eval:payments
+
+      - name: Run agent evaluation
+        if: ${{ !cancelled() }}
+        run: pnpm eval:payments:agent
+
+      - name: Upload eval reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-payment-evals
+          path: evaluations/agent-payments/results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  live:
+    name: Testnet proof
+    if: ${{ inputs.live }}
+    needs: offline
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Holds RADIUS_EVAL_PRIVATE_KEY (funded, testnet-only) and RADIUS_EVAL_PAY_TO (a different address).
+    environment: testnet-eval
+    # One paid run at a time, so two dispatches can't race the same buyer wallet.
+    concurrency:
+      group: agent-payment-evals-live
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6 # reads the version from package.json#packageManager
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Run testnet proof
+        env:
+          RADIUS_EVAL_LIVE: '1'
+          RADIUS_EVAL_PRIVATE_KEY: ${{ secrets.RADIUS_EVAL_PRIVATE_KEY }}
+          RADIUS_EVAL_PAY_TO: ${{ secrets.RADIUS_EVAL_PAY_TO }}
+        run: pnpm eval:payments:live --confirm-testnet-spend
+
+      # A paid failure still writes a partial report with any known transaction hash.
+      - name: Upload testnet report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-payment-evals-live
+          path: evaluations/agent-payments/results/live.json
+          if-no-files-found: ignore
+          retention-days: 30
