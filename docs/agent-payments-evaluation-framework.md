@@ -12,7 +12,7 @@ The reference transaction is: an agent needs one result from a seller's priced `
 
 | Surface | Present in this repo | Evaluation implication |
 | --- | --- | --- |
-| CLI | `wallet x402` uses SDK `createRadiusFetch`, adds local wallet, threshold/TTY decision, HTTP input and JSON output. `--yes` without a threshold is uncapped. | Run the real CLI as a subprocess. Do not infer CLI behavior from SDK tests alone. |
+| CLI | `wallet pay` uses SDK `createRadiusFetch`, adds local wallet, threshold/TTY decision, HTTP input and JSON output. `--yes` without a threshold is uncapped. | Run the real CLI as a subprocess. Do not infer CLI behavior from SDK tests alone. |
 | SDK buyer | Handles v1 `exact` via EIP-3009, v2 `exact` via Permit2 or EIP-3009, and v2 `upto` via Permit2; checks configured network, asset, and required per-request cap. | Test offer selection, signing, retries, and receipts at the protocol boundary. An outer host must enforce seller/recipient policy and cumulative budget. |
 | SDK seller | Web-standard and Hono payment handlers, plus upstream adapter support; can settle before or after the handler. | Test challenge correctness, facilitator failures, delivery, and settlement/delivery order. |
 | Network and facilitator | Opt-in SDK end-to-end tests exercise real testnet settlement; `getSettlement` reads a transaction receipt and payment-asset transfer logs. | Keep a small funded acceptance suite distinct from mocked protocol tests. Recheck current facilitator capabilities before asserting live support for a scheme. |

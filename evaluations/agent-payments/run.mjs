@@ -249,7 +249,7 @@ async function run() {
   await fixture.start();
   const env = { RADIUS_HOME: home, RADIUS_PASSWORD: 'local-eval-only', RADIUS_NETWORK: 'testnet', RADIUS_RPC_URL: fixture.rpcUrl };
   const sdk = () => createRadiusFetch({ network: 'testnet', rpcUrl: fixture.rpcUrl, signer: `0x${randomBytes(32).toString('hex')}`, maxPerRequest: { amount: '10000' } });
-  const cliArgs = (url, extra = []) => ['--network', 'testnet', '--rpc-url', fixture.rpcUrl, '--json', 'wallet', 'x402', 'get', url, '--x402-threshold', '0.01', '-y', ...extra];
+  const cliArgs = (url, extra = []) => ['--network', 'testnet', '--rpc-url', fixture.rpcUrl, '--json', 'wallet', 'pay', 'get', url, '--threshold', '0.01', '-y', ...extra];
   const cases = [];
   const execute = async (id, surface, fn) => {
     if (only && only !== id) return;
