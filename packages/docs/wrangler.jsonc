@@ -22,5 +22,5 @@
     "TRY_PAY_TO": "0x0fD9Ba4a476C7f544cC9b04e54D6B7bb53F2f568",
   },
   // The custom domain is added at cutover, after the old Pages project releases it:
-  // "routes": [{ "pattern": "docs.radiustech.xyz", "custom_domain": true }],
+  "routes": [{ "pattern": "docs.radiustech.xyz", "custom_domain": true }],
 }
