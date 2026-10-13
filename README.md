@@ -4,7 +4,7 @@ Tools and developer docs for the [Radius Network](https://radiustech.xyz), manag
 
 | Package | What |
 | --- | --- |
-| [`packages/cli`](./packages/cli) | [`radius-cli`](https://www.npmjs.com/package/radius-cli) — CLI wallet for Radius, modeled on Foundry's `cast`; `wallet pay` pays x402 on Radius (and optionally Base) through `radius-sdk` |
+| [`packages/cli`](./packages/cli) | [`radius-cli`](https://www.npmjs.com/package/radius-cli) — CLI wallet for Radius, modeled on Foundry's `cast`; `wallet pay` pays x402 on Radius (and optionally Base) through `radius-sdk`, and `sell check` checks a seller's 402 |
 | [`packages/sdk`](./packages/sdk) | [`radius-sdk`](https://www.npmjs.com/package/radius-sdk) — accept and make x402 v2 payments on Radius (and optionally Base or any EVM chain) from any web-standard runtime, Hono, or the upstream x402 framework adapters (Express, Next.js), plus balance and settlement helpers |
 | [`packages/docs`](./packages/docs) | Source of [docs.radiustech.xyz](https://docs.radiustech.xyz) (Vocs on a Cloudflare Worker); private, never published to npm |
 
@@ -18,12 +18,12 @@ Runnable SDK examples (seller workers with and without Hono, an Express seller, 
 
 The [agent payment evaluation framework](docs/agent-payments-evaluation-framework.md) defines adversarial CLI, SDK, agent, and network scenarios with separate payment, delivery, and reconciliation evidence.
 
-Run its local, unfunded evaluation with `pnpm eval:payments` and its agent decision scenarios with `pnpm eval:payments:agent`. See the [runner guide](evaluations/agent-payments/README.md) for case selection, an external agent adapter, reports, and the opt-in testnet proof.
+Run its local, unfunded evaluation with `pnpm eval:payments`, its agent decision scenarios with `pnpm eval:payments:agent`, and the seller side, including a one-shot coding-agent integration, with `pnpm eval:payments:sell`. See the [runner guide](evaluations/agent-payments/README.md) for case selection, an external agent adapter, reports, and the opt-in testnet proof.
 
 ## Agent skills
 
-The [Radius Claude Code plugin](plugins/radius) contains the `radius-dev`, `x402`,
-and `dripping-faucet` skills. The marketplace manifest is at
+The [Radius Claude Code plugin](plugins/radius) contains the `radius-dev`, `x402`
+(paying), `sell-api` (charging for an API), and `dripping-faucet` skills. The marketplace manifest is at
 [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json). These files
 live outside `packages/*`. The plugin has its own version in
 [`plugins/radius/.claude-plugin/plugin.json`](plugins/radius/.claude-plugin/plugin.json)

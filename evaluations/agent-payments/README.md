@@ -36,7 +36,7 @@ The facilitators are local mocks ([`mock-facilitator.mjs`](mock-facilitator.mjs)
 
 | ID | What it checks |
 | --- | --- |
-| SELL-ONESHOT | Scaffolds a fresh TypeScript Express app and a fresh Hono app, has an integrator write `server.ts`, boots it with `node --experimental-strip-types`, and grades it with checks for the free route, the 402 offer (amount, asset, network, `PAY_TO`), an SDK buyer happy path settled once, a CLI over-threshold refusal, a payment re-signed to a man-in-the-middle recipient (refused), and a replayed payment (refused). |
+| SELL-ONESHOT | Scaffolds a fresh TypeScript Express app and a fresh Hono app, has an integrator write `server.ts`, boots it with `node --experimental-strip-types`, and grades it with checks for the free route, the 402 offer (amount, asset, network, `PAY_TO`), an SDK buyer happy path settled once, a CLI over-threshold refusal, a payment re-signed to a man-in-the-middle recipient (refused), a replayed payment (refused), and `radius-cli sell check --price '$0.001'` against the mock facilitator (exit 0, nothing paid). |
 | SELL-CHALLENGE | 402 correctness per adapter: amount and decimals (including an 18-decimal asset), `payTo`, asset, network, transfer method, `resource` bound to the requested URL, `maxTimeoutSeconds`, `no-store`, and no handler run. The MPP `WWW-Authenticate: Payment` challenge mirrors the offer on `radiusPayments`/Hono. The test asserts that `@x402/express` emits no MPP challenge (a known gap; upstream adapters are x402 only). |
 | SELL-DUAL | One route offering both x402 and MPP: each protocol settles exactly once. An MPP credential with a tampered challenge amount or expiry, an expired challenge, or a challenge issued under a different `secretKey` is refused. The untampered credential still pays at its issuer. |
 | SELL-MULTI-NET | One route offering Radius testnet (72344) and Base Sepolia (84532): each payment settles only through its network's facilitator. A payload signed for one offer and relabeled as the other is refused. |
@@ -55,12 +55,16 @@ Some behaviors are recorded under `observations` without being graded. x402 core
 
 ### One-shot agent hook
 
-By default, SELL-ONESHOT copies the reference integrations in [`fixtures/sell-oneshot/`](fixtures/sell-oneshot/), which are the minimal apps a one-shot agent should produce. To grade a real coding agent instead, set `SELL_INTEGRATOR_CMD`. The command runs through the shell once per framework, inside a fresh app directory. That directory contains a `package.json` and a `node_modules` linking `radius-sdk`, `express`, `@x402/express`, `@x402/core`, `hono` and `viem`. The command must write `server.ts` there, following the task in `PROMPT.md`, which is written into the directory from [`fixtures/sell-oneshot/PROMPT.md`](fixtures/sell-oneshot/PROMPT.md).
+By default, SELL-ONESHOT copies the reference integrations in [`fixtures/sell-oneshot/`](fixtures/sell-oneshot/), which are the minimal apps a one-shot agent should produce. To grade a real coding agent instead, set `SELL_INTEGRATOR_CMD`. The command runs through the shell once per framework, inside a fresh app directory. That directory contains a `package.json` that lists `radius-sdk`, `viem` and one framework (`express` with `@x402/express` and `@x402/core`, or `hono`), and a `node_modules` linking exactly those. The command must write `server.ts` there, following the task in `PROMPT.md`.
+
+The task is [`plugins/radius/evals/sell-oneshot/prompt.md`](../../plugins/radius/evals/sell-oneshot/prompt.md) without its frontmatter. The same file is a Claude Code plugin eval case, whose graders check that the `sell-api` skill fired and judge the reply; this runner is its deterministic grader. The prompt names neither the framework nor any repository path: the agent reads the framework from `package.json` and has to find the `sell-api` skill on its own, so load the Radius plugin into the agent. With Claude Code:
 
 ```sh
-SELL_INTEGRATOR_CMD='claude -p "$(cat "$SELL_PROMPT_FILE")" --allowedTools Read,Write,Edit' \
-  pnpm eval:payments:sell --case SELL-ONESHOT
+SELL_INTEGRATOR_CMD='claude -p "$(cat "$SELL_PROMPT_FILE")" --plugin-dir "$SELL_REPO_ROOT/plugins/radius" --allowedTools "Skill,Read,Glob,Grep,Write,Edit" --permission-mode dontAsk' \
+  pnpm eval:payments:sell -- --case SELL-ONESHOT
 ```
+
+`--plugin-dir` loads the plugin for that session only, `--allowedTools` pre-approves the listed tools, and `--permission-mode dontAsk` denies everything else instead of prompting (flags as of Claude Code 2.1). The agent gets no shell, so it cannot install packages, start the app or run `radius-cli`; add `Bash` to let it run `radius-cli sell check` itself, which also lets it run anything else.
 
 The command receives `SELL_FRAMEWORK` (`express` or `hono`), `SELL_APP_DIR`, `SELL_PROMPT_FILE` and `SELL_REPO_ROOT`, plus the caller's environment minus every `RADIUS_*` variable. It is a trusted local command: it runs with your user's permissions, and there is no sandbox. `SELL_INTEGRATOR_TIMEOUT_MS` defaults to 15 minutes. The grader then starts the app with `PORT`, `PAY_TO` and `RADIUS_FACILITATOR_URL` (a mock facilitator), and runs the same checks it runs on the reference. The report records the integrator, its exit status, and the tail of its output.
 

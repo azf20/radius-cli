@@ -138,7 +138,13 @@ Run the app locally, for example with `wrangler dev`, and request a protected ro
 curl -i http://localhost:8787/api/lookup
 ```
 
-The response is `402 Payment Required` with a `PAYMENT-REQUIRED` header describing the price. Pay it from a funded testnet wallet with [`radius-cli`](/reference/radius-cli#paid-endpoints):
+The response is `402 Payment Required` with a `PAYMENT-REQUIRED` header describing the price. Check what it asks for with [`radius-cli sell check`](/reference/radius-cli#check-a-paid-endpoint) (`radius-cli` 0.5.0 or later), which decodes the challenge without paying and checks the network, asset and decimals, amount, recipient, resource URL, and the facilitator's support for each offer:
+
+```bash
+radius-cli sell check http://localhost:8787/api/lookup --price '$0.001' --probe-head
+```
+
+Then pay it from a funded testnet wallet with [`radius-cli`](/reference/radius-cli#paid-endpoints):
 
 ```bash
 RADIUS_HOME=.radius RADIUS_NETWORK=testnet \

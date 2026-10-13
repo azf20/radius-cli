@@ -1,6 +1,6 @@
 {
-  "name": "x402 Server and Client Integration",
-  "skills": ["x402"],
+  "name": "Hono Seller and SDK Buyer Integration",
+  "skills": ["sell-api", "x402"],
   "query": "Add x402 payment gating to my Hono API endpoint that charges 0.0001 SBC per request on Radius mainnet, then write a script that calls it with a signed payment",
   "context": "The user has a Hono API and a funded Radius mainnet wallet. The Radius-operated facilitator is the target.",
   "expected_behavior": [
@@ -12,7 +12,7 @@
     "Keeps key material out of logs and source code"
   ],
   "success_criteria": [
-    "An unpaid request receives HTTP 402 with a PAYMENT-REQUIRED header advertising x402 v2 exact Permit2 on eip155:723487",
+    "An unpaid request receives HTTP 402 with a PAYMENT-REQUIRED header advertising an x402 v2 exact offer on eip155:723487 (EIP-3009 with the Radius facilitator)",
     "The seller charges 100 atomic SBC units (0.0001 SBC) to the configured merchant address",
     "The buyer uses SDK challenge selection and signing rather than hard-coded accepts[0] or manual dual-signature assembly",
     "The buyer inspects PAYMENT-RESPONSE and preserves its transaction hash for on-chain reconciliation",

@@ -29,7 +29,7 @@ command -v radius-cli
 radius-cli --help
 ```
 
-Use `radius-cli` version `0.4.0` or later. From `0.3.0`, `wallet balance` reports {NATIVE_TOKEN} and {STABLECOIN} separately, and `wallet send` transfers any ERC-20. From `0.4.0`, `wallet pay` (formerly `wallet x402`, with `--threshold` and `--approve-permit2` formerly `--x402-threshold` and `--x402-approve-permit2`) also pays MPP challenges and USDC on Base. Verify that your installed binary exposes the payment command:
+Use `radius-cli` version `0.4.0` or later. From `0.3.0`, `wallet balance` reports {NATIVE_TOKEN} and {STABLECOIN} separately, and `wallet send` transfers any ERC-20. From `0.4.0`, `wallet pay` (formerly `wallet x402`, with `--threshold` and `--approve-permit2` formerly `--x402-threshold` and `--x402-approve-permit2`) also pays MPP challenges and USDC on Base. From `0.5.0`, `sell check` checks a seller's `402` before you deploy it. Verify that your installed binary exposes the payment command:
 
 ```bash
 radius-cli --version
@@ -244,6 +244,26 @@ Without sponsorship, pass `--approve-permit2` (or `-y`) to send a one-time unlim
 
 The response body goes to stdout. Payment confirmation and, with `--include`, status and headers go to stderr. With `--json`, stdout is one object: `{status, headers, body, bodyEncoding, payment}`. `payment.network` is the CAIP-2 network paid on and `payment.protocol` is `x402` or `mpp`.
 
+## Check a paid endpoint
+
+Use `radius-cli sell check <url>` on your own paid route, locally or deployed, to see what buyers will be asked for. It requests the URL without paying (`-X` sets the method, `-H` and `-d` work as for `wallet pay`), decodes the x402 `PAYMENT-REQUIRED` challenge and any MPP `WWW-Authenticate: Payment` challenge with [`radius-sdk`](/reference/radius-sdk), and checks:
+
+- the unpaid response is a `402` marked `no-store`
+- each offer's network is known, its asset and EIP-712 domain are the network's payment asset, its amount parses (and equals `--price` at the asset's decimals), `payTo` is an address, and `maxTimeoutSeconds` is sensible
+- the challenge's `resource.url` is the requested URL
+- the facilitator's `/supported` lists each offer's scheme, network and transfer method: the network's default facilitator, or the ones given with `--facilitator <url>` (`RADIUS_FACILITATOR_API_KEY` is sent as `x-api-key`)
+- a `radius-sdk` buyer would select the offer, and each MPP challenge mirrors an x402 offer
+
+```bash
+radius-cli sell check http://localhost:8787/api/lookup --price '$0.001'
+radius-cli sell check https://api.example.com/query -X post -d '{"q":1}' --facilitator https://facilitator.example
+radius-cli --json sell check http://localhost:8787/api/lookup --probe-head
+```
+
+`--probe-head` also sends an unpaid `HEAD` and warns when it is served, because routers answer `HEAD` with the `GET` handler. `--pay --threshold <amount>` then makes one paid request from the local wallet and checks that a receipt comes back. It pays on testnet unless `--network mainnet` is given, whatever `RADIUS_NETWORK` says.
+
+The command prints one line per check (`ok`, `warn`, `FAIL`, `skip`, `info`); with `--json`, stdout is one object with `ok`, `offers`, `mpp`, `facilitators`, `checks` and `summary`. It exits `0` when no check failed, `1` when one did, and `2` on invalid flags.
+
 ## When to use other tools
 
 | Task                                       | Preferred tool                           |
@@ -254,6 +274,7 @@ The response body goes to stdout. Payment confirmation and, with `--include`, st
 | Local agent wallet operations              | `radius-cli`                             |
 | One-off contract reads from a terminal     | `radius-cli call` or Foundry `cast call` |
 | Paid endpoints from an agent shell         | `radius-cli wallet pay`                  |
+| Check your own paid endpoint               | `radius-cli sell check`                  |
 | Accept or make x402 payments in TypeScript | [`radius-sdk`](/reference/radius-sdk)    |
 
 ## Related pages

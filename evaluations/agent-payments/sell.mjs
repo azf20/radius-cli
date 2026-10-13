@@ -274,11 +274,16 @@ function runCli(args, env) {
 
 // -- one-shot integration --------------------------------------------------------------------
 
-/** Packages a fresh seller app may import, as `npm i radius-sdk express @x402/express hono viem` would provide them. */
+/** The packages a fresh app of each framework has, as `npm i radius-sdk …` would provide them. Only these are linked and listed. */
+const ONESHOT_PACKAGES = { express: ['express', '@x402/express', '@x402/core', 'viem'], hono: ['hono', 'viem'] };
+/** The one-shot task, shared with the Claude plugin eval of the same name (its frontmatter is for that runner). */
+const ONESHOT_PROMPT = join(ROOT, 'plugins/radius/evals/sell-oneshot/prompt.md');
+
+/** A fresh seller app: a `package.json` naming the framework (the integrator detects it from there) and its `node_modules`. */
 async function scaffoldApp(framework) {
   const dir = await mkdtemp(join(tmpdir(), `radius-sell-oneshot-${framework}-`));
   const packages = { 'radius-sdk': join(ROOT, 'packages/sdk') };
-  for (const name of ['express', '@x402/express', '@x402/core', 'hono', 'viem']) packages[name] = await realpath(join(SDK_MODULES, name));
+  for (const name of ONESHOT_PACKAGES[framework]) packages[name] = await realpath(join(SDK_MODULES, name));
   for (const [name, target] of Object.entries(packages)) {
     await mkdir(dirname(join(dir, 'node_modules', name)), { recursive: true });
     await symlink(target, join(dir, 'node_modules', name), 'dir');
@@ -296,8 +301,8 @@ async function integrate(framework, dir) {
     await cp(join(HERE, 'fixtures/sell-oneshot', framework), dir, { recursive: true });
     return { integrator: 'reference' };
   }
-  const prompt = (await readFile(join(HERE, 'fixtures/sell-oneshot/PROMPT.md'), 'utf8'))
-    .replaceAll('{{FRAMEWORK}}', framework === 'express' ? 'Express' : 'Hono').replaceAll('{{REPO_ROOT}}', ROOT);
+  // The prompt names no framework and no repository path: the agent reads the framework from package.json and finds the sell-api skill itself.
+  const prompt = (await readFile(ONESHOT_PROMPT, 'utf8')).replace(/^---\n[\s\S]*?\n---\n/, '');
   const promptFile = join(dir, 'PROMPT.md');
   await writeFile(promptFile, prompt);
   // The agent gets no Radius wallet configuration: it writes code, it never pays.
@@ -482,6 +487,17 @@ async function run() {
         await t.check(`${at} replayed payment is refused`, () => {
           assert.notEqual(replay.status, 200);
           assert.doesNotMatch(replay.text, /quarterly-sales/);
+          assert.equal(fac.settled.length, 1);
+        });
+
+        // The check the sell-api skill tells integrators to run before deploying, without paying.
+        const sellCheck = await runCli(['--json', 'sell', 'check', url, '--price', '$0.001', '--facilitator', fac.url], cliEnv);
+        let checked;
+        try { checked = JSON.parse(sellCheck.stdout); } catch { checked = undefined; }
+        t.observe(`${framework}.sellCheck`, checked ? { ok: checked.ok, summary: checked.summary, notPassed: checked.checks.filter((c) => c.status !== 'pass') } : { code: sellCheck.code, stderr: sellCheck.stderr.slice(-500) });
+        await t.check(`${at} radius-cli sell check passes`, () => {
+          assert.equal(sellCheck.code, 0, sellCheck.stderr || JSON.stringify(checked?.checks.filter((c) => c.status === 'fail')));
+          assert.equal(checked.ok, true);
           assert.equal(fac.settled.length, 1);
         });
         t.observe(`${framework}.appOutputTail`, app.output().slice(-500));

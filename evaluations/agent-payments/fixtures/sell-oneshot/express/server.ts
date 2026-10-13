@@ -1,4 +1,5 @@
-// Reference one-shot integration (Express): what a coding agent should produce from PROMPT.md.
+// Reference one-shot integration (Express): what a coding agent should produce from the task in
+// plugins/radius/evals/sell-oneshot/prompt.md.
 // The SDK supplies the Radius resource server; the upstream @x402/express adapter supplies the middleware.
 import express from 'express';
 import { paymentMiddleware } from '@x402/express';

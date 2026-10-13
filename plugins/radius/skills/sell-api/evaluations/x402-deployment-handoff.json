@@ -1,0 +1,20 @@
+{
+    "name": "Paid Endpoint Deployment Handoff",
+    "skills": ["sell-api"],
+    "query": "Deploy an x402-gated endpoint on Radius testnet that charges 0.001 SBC per request. Use whatever deployment skill is appropriate after the endpoint works locally.",
+    "context": "The user explicitly wants deployment, but the sell-api skill owns payment behavior rather than infrastructure. The correct behavior is to implement and verify payments locally or in the existing app, then hand off to a platform-specific deployment skill such as Cloudflare, Wrangler, or Railway based on the project target.",
+    "expected_behavior": [
+        "Implements payment gating with radius-sdk before protected content is returned, with network 'testnet' and price '$0.001'",
+        "Runs the app locally and checks the unpaid response with radius-cli sell check (or curl -i): HTTP 402, PAYMENT-REQUIRED with x402Version 2 and an exact offer on eip155:72344 for 1000 atomic SBC to payTo",
+        "After local verification, invokes or clearly hands off to the relevant deployment skill selected from the user's project context",
+        "Carries PAY_TO, any MPP secret key, and facilitator settings into the platform's configuration as secrets or variables rather than code",
+        "Does not stop with deployment out of scope when deployment was explicitly requested"
+    ],
+    "success_criteria": [
+        "Endpoint behavior is payment-ready before deployment",
+        "No production secrets or infrastructure settings are changed until the deployment skill handles that phase",
+        "The deployment phase is routed to a platform-specific skill rather than implemented ad hoc inside sell-api",
+        "The deployed endpoint is re-checked with radius-cli sell check against its public URL",
+        "Amount uses 6-decimal raw units: 1000 for 0.001 SBC"
+    ]
+}
