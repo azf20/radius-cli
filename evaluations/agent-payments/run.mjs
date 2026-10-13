@@ -5,23 +5,20 @@ import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRadiusFetch, getPaymentReceipt, RadiusPaymentError } from '../../packages/sdk/dist/client/index.js';
-import { PERMIT2_ADDRESS, X402_EXACT_PERMIT2_PROXY, resolveNetwork } from '../../packages/sdk/dist/index.js';
+import { resolveNetwork } from '../../packages/sdk/dist/index.js';
 import { policyLedger } from './policy-ledger.mjs';
+import { verifySignedPayment } from './signatures.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const CLI = join(ROOT, 'packages/cli/dist/index.js');
-const requireFromSdk = createRequire(join(ROOT, 'packages/sdk/package.json'));
-const { recoverTypedDataAddress } = requireFromSdk('viem');
 const NETWORK = resolveNetwork('testnet');
 const PAY_TO = '0x000000000000000000000000000000000000dEaD';
 const WRONG_ASSET = '0x000000000000000000000000000000000000bad0';
 const FACILITATOR = '0x00000000000000000000000000000000fac11107';
-const UPTO_PROXY = '0x4020A4f3b7b90ccA423B9fabCc0CE57C6C240002';
 const AMOUNT = '1000'; // 0.001 SBC
 const TX_HASH = `0x${'ab'.repeat(32)}`;
 const b64 = (value) => Buffer.from(JSON.stringify(value)).toString('base64');
@@ -155,46 +152,9 @@ function createFixture() {
           entry.payTo.toLowerCase() === (payload.accepted?.payTo ?? entry.payTo)?.toLowerCase() &&
           (entry.amount ?? entry.maxAmountRequired) === (payload.accepted?.amount ?? payload.payload?.authorization?.value ?? payload.payload?.permit2Authorization?.permitted?.amount) &&
           entry.scheme === (payload.accepted?.scheme ?? payload.scheme));
-        const auth = payload.payload?.authorization;
         try {
           if (![1, 2].includes(payload.x402Version) || !accepted || !/^0x[0-9a-f]{130}$/i.test(payload.payload?.signature ?? '')) throw new Error('bad envelope');
-          if (auth) {
-            if (auth.to.toLowerCase() !== accepted.payTo.toLowerCase() || auth.value !== (accepted.amount ?? accepted.maxAmountRequired)) throw new Error('wrong authorization');
-            const recovered = await recoverTypedDataAddress({
-              domain: { name: accepted.extra.name, version: accepted.extra.version, chainId: NETWORK.chainId, verifyingContract: accepted.asset },
-              types: { TransferWithAuthorization: [
-                { name: 'from', type: 'address' }, { name: 'to', type: 'address' }, { name: 'value', type: 'uint256' },
-                { name: 'validAfter', type: 'uint256' }, { name: 'validBefore', type: 'uint256' }, { name: 'nonce', type: 'bytes32' },
-              ] },
-              primaryType: 'TransferWithAuthorization',
-              message: { from: auth.from, to: auth.to, value: BigInt(auth.value), validAfter: BigInt(auth.validAfter), validBefore: BigInt(auth.validBefore), nonce: auth.nonce },
-              signature: payload.payload.signature,
-            });
-            trace.signatureValid = recovered.toLowerCase() === auth.from.toLowerCase();
-          } else {
-            const a = payload.payload.permit2Authorization;
-            const upto = accepted.scheme === 'upto';
-            if (!a || a.permitted.token.toLowerCase() !== accepted.asset.toLowerCase() ||
-              a.permitted.amount !== accepted.amount || a.witness.to.toLowerCase() !== accepted.payTo.toLowerCase() ||
-              a.spender.toLowerCase() !== (upto ? UPTO_PROXY : X402_EXACT_PERMIT2_PROXY).toLowerCase() ||
-              (upto && a.witness.facilitator.toLowerCase() !== accepted.extra.facilitatorAddress.toLowerCase())) throw new Error('wrong permit');
-            const witness = upto ? [
-              { name: 'to', type: 'address' }, { name: 'facilitator', type: 'address' }, { name: 'validAfter', type: 'uint256' },
-            ] : [{ name: 'to', type: 'address' }, { name: 'validAfter', type: 'uint256' }];
-            const recovered = await recoverTypedDataAddress({
-              domain: { name: 'Permit2', chainId: NETWORK.chainId, verifyingContract: PERMIT2_ADDRESS },
-              types: { PermitWitnessTransferFrom: [
-                { name: 'permitted', type: 'TokenPermissions' }, { name: 'spender', type: 'address' },
-                { name: 'nonce', type: 'uint256' }, { name: 'deadline', type: 'uint256' }, { name: 'witness', type: 'Witness' },
-              ], TokenPermissions: [{ name: 'token', type: 'address' }, { name: 'amount', type: 'uint256' }], Witness: witness },
-              primaryType: 'PermitWitnessTransferFrom',
-              message: { permitted: { token: a.permitted.token, amount: BigInt(a.permitted.amount) },
-                spender: a.spender, nonce: BigInt(a.nonce), deadline: BigInt(a.deadline),
-                witness: { to: a.witness.to, ...(upto ? { facilitator: a.witness.facilitator } : {}), validAfter: BigInt(a.witness.validAfter) } },
-              signature: payload.payload.signature,
-            });
-            trace.signatureValid = recovered.toLowerCase() === a.from.toLowerCase();
-          }
+          trace.signatureValid = (await verifySignedPayment({ requirements: accepted, payload: payload.payload, chainId: NETWORK.chainId })).valid;
         } catch { trace.signatureValid = false; }
         if (!trace.signatureValid) { reply(res, 402, {}, 'invalid signed payment'); return; }
         if (config.paidMode === 'reject') { reply(res, 402, {}, 'payment rejected'); return; }

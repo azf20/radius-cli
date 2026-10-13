@@ -15,6 +15,7 @@
     "eval:payments": "pnpm build && node evaluations/agent-payments/run.mjs",
     "eval:payments:agent": "pnpm build && node evaluations/agent-payments/agent.mjs",
     "eval:payments:live": "node evaluations/agent-payments/live.mjs",
+    "eval:payments:sell": "pnpm build && node evaluations/agent-payments/sell.mjs",
 
     "release": "pnpm build && changeset publish",
     "test": "pnpm --filter './packages/*' --filter '!radius-docs' run test",

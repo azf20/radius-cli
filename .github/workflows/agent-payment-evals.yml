@@ -1,7 +1,7 @@
 name: Agent payment evals
 
 # Manual only. Builds the CLI and SDK from the selected ref and runs the agent payment
-# evaluation (evaluations/agent-payments/README.md). The offline and agent suites are
+# evaluation (evaluations/agent-payments/README.md). The offline, agent and seller suites are
 # unfunded. The testnet proof spends 0.001 SBC per run, so it runs only when requested.
 on:
   workflow_dispatch:
@@ -15,7 +15,7 @@ permissions: {}
 
 jobs:
   offline:
-    name: Offline and agent evals
+    name: Offline, agent and seller evals
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -44,6 +44,10 @@ jobs:
       - name: Run agent evaluation
         if: ${{ !cancelled() }}
         run: pnpm eval:payments:agent
+
+      - name: Run seller evaluation
+        if: ${{ !cancelled() }}
+        run: pnpm eval:payments:sell
 
       - name: Upload eval reports
         if: ${{ !cancelled() }}
