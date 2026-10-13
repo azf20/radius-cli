@@ -128,209 +128,41 @@ When running bash commands as an agent (e.g. in Claude Code), **every shell invo
 
 Every `curl` and `radius-cli` call in the examples below includes an explicit `echo` of its output. This is not optional — without it, the agent sees `(No output)` and cannot proceed.
 
-## TypeScript Example (viem)
+## TypeScript Example (radius-sdk)
+
+For an app that already has an operator-approved signer, use `fund()` from
+`radius-sdk/client`. It signs the faucet's EIP-191 challenge and requests a drip.
+Install `radius-sdk` and its `viem` peer dependency. A faucet API success is not
+receipt confirmation: check the transaction hash before reporting funds as
+received.
 
 ```typescript
-import { defineChain, createPublicClient, http, erc20Abi, isAddress, formatUnits } from 'viem';
-import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
+import { createPublicClient, http } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+import { radiusTestnet } from 'radius-sdk';
+import { createRadiusFetch } from 'radius-sdk/client';
 
-// --- Network configuration ---
-type Network = 'testnet' | 'mainnet';
-
-const NETWORK_CONFIG: Record<Network, { faucetUrl: string; chain: Chain }> = {
-  testnet: {
-    faucetUrl: 'https://testnet.radiustech.xyz/api/v1/faucet',
-    chain: defineChain({
-      id: 72344,
-      name: 'Radius Testnet',
-      nativeCurrency: { decimals: 18, name: 'RUSD', symbol: 'RUSD' },
-      rpcUrls: { default: { http: ['https://rpc.testnet.radiustech.xyz'] } },
-      blockExplorers: {
-        default: { name: 'Radius Testnet Explorer', url: 'https://testnet.radiustech.xyz' },
-      },
-      fees: radiusFees,
-    }),
-  },
-  mainnet: {
-    faucetUrl: 'https://network.radiustech.xyz/api/v1/faucet',
-    chain: defineChain({
-      id: 723487,
-      name: 'Radius Mainnet',
-      nativeCurrency: { decimals: 18, name: 'RUSD', symbol: 'RUSD' },
-      rpcUrls: { default: { http: ['https://rpc.radiustech.xyz'] } },
-      blockExplorers: {
-        default: { name: 'Radius Explorer', url: 'https://network.radiustech.xyz' },
-      },
-      fees: radiusFees,
-    }),
-  },
-};
-
-const SBC_CONTRACT = '0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb' as const;
-const SBC_DECIMALS = 6;
-
-const radiusTestnet = defineChain({
-  id: 72344,
-  name: 'Radius Testnet',
-  nativeCurrency: { decimals: 18, name: 'RUSD', symbol: 'RUSD' },
-  rpcUrls: { default: { http: ['https://rpc.testnet.radiustech.xyz'] } },
-  blockExplorers: {
-    default: { name: 'Radius Testnet Explorer', url: 'https://testnet.radiustech.xyz' },
-  },
+const key = process.env.RADIUS_PRIVATE_KEY;
+if (!key) throw new Error('Configure RADIUS_PRIVATE_KEY through your secrets manager');
+const signer = privateKeyToAccount(key as `0x${string}`);
+const wallet = createRadiusFetch({
+  network: 'testnet',
+  signer,
+  maxPerRequest: '$0.01', // required by the paying client; fund() does not spend it
 });
+const drip = await wallet.fund();
+if (!drip.txHash) throw new Error('Faucet accepted the request without a transaction hash');
 
-// --- Wallet setup ---
-// Option A: We have an existing key (user's wallet, stored in .env)
-// const privateKey = process.env.PRIVATE_KEY as `0x${string}`;
-
-// Option B: We only have an address (no signer — current deployments will reject it)
-// const addressOnly = '0x...' as `0x${string}`;
-
-// Option C: Create a new wallet (we own the key)
-const privateKey = generatePrivateKey();
-const account = privateKeyToAccount(privateKey);
-// SECURITY: only log the address, never the key
-console.log('Wallet address:', account.address);
-
-// If using Option B, set account to null — the signed fallback will not be available.
-// The dripWithRetry function below handles this.
-
-// --- Faucet drip with eval loop ---
-async function dripWithRetry(
-  address: string,
-  /** Pass null if no operator-approved signer is available. */
-  signer: { signMessage: (args: { message: string }) => Promise<string> } | null,
-  network: Network = 'testnet',
-  maxAttempts = 3
-): Promise<{ success: boolean; network: Network; tx_hash?: string; balance?: string; error?: string }> {
-  if (!isAddress(address)) {
-    return { success: false, network, error: `Invalid address: ${address}` };
-  }
-
-  const { faucetUrl, chain } = NETWORK_CONFIG[network];
-
-  // Both deployed faucets currently require a signature. Fail fast when no
-  // approved signer is available rather than making a request known to fail.
-  if (!signer) {
-    return {
-      success: false,
-      network,
-      error: 'signature_required_but_no_signer',
-    };
-  }
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    // 1. Try unsigned drip first (skipping straight to signed flow on mainnet is an
-    //    optimisation you may apply, but the unsigned attempt is safe to make here
-    //    since the signed fallback is implemented below).
-    const dripRes = await fetch(`${faucetUrl}/drip`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address, token: 'SBC' }),
-    });
-    let drip = await dripRes.json();
-
-    // Error responses currently use { error: { code, message, ... } }.
-    let errorCode = typeof drip.error === 'string' ? drip.error : drip.error?.code;
-    let errorMessage = typeof drip.error === 'string' ? drip.message : drip.error?.message;
-
-    // 2. If signature required, fall back to signed flow (only if we have a signer)
-    if (errorCode === 'signature_required') {
-      if (!signer) {
-        return {
-          success: false,
-          network,
-          error: 'signature_required_but_no_signer',
-        };
-      }
-      console.log('Signature required — switching to signed flow');
-
-      // Check status
-      const statusRes = await fetch(`${faucetUrl}/status/${address}?token=SBC`);
-      const status = await statusRes.json();
-      if (status.rate_limited) {
-        const waitMs = status.retry_after_ms ?? 60_000;
-        console.log(`Rate limited. Waiting ${waitMs}ms (attempt ${attempt}/${maxAttempts})`);
-        // On mainnet, retry_after_ms can be ~86_400_000 (24 hours). Do not loop — report to user.
-        if (waitMs > 3_600_000) {
-          return { success: false, network, error: `rate_limited_long_wait_ms:${waitMs}` };
-        }
-        await new Promise((r) => setTimeout(r, waitMs));
-        continue;
-      }
-
-      // Get challenge — extract only the "message" field
-      const challengeRes = await fetch(`${faucetUrl}/challenge/${address}?token=SBC`);
-      const challenge = await challengeRes.json();
-      const message: string = challenge.message;
-
-      // Sign (EIP-191)
-      const signature = await signer.signMessage({ message });
-
-      // Retry drip with signature
-      const signedRes = await fetch(`${faucetUrl}/drip`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address, token: 'SBC', signature }),
-      });
-      drip = await signedRes.json();
-      errorCode = typeof drip.error === 'string' ? drip.error : drip.error?.code;
-      errorMessage = typeof drip.error === 'string' ? drip.message : drip.error?.message;
-    }
-
-    // 3. Evaluate
-    if (drip.success) {
-      // Verify on-chain (the receipt is ground truth, not the API response)
-      const publicClient = createPublicClient({ chain, transport: http() });
-      const balance = await publicClient.readContract({
-        address: SBC_CONTRACT,
-        abi: erc20Abi,
-        functionName: 'balanceOf',
-        args: [address as `0x${string}`],
-      });
-      const formatted = formatUnits(balance, SBC_DECIMALS);
-      console.log(`SBC balance (${network}): ${formatted}`);
-      return { success: true, network, tx_hash: drip.tx_hash, balance: formatted };
-    }
-
-    // Critique: map error to action
-    console.error(`Attempt ${attempt} failed: ${errorCode} — ${errorMessage ?? ''}`);
-
-    if (errorCode === 'rate_limited') {
-      const waitMs = drip.error?.retry_after_ms ?? drip.retry_after_ms ?? 60_000;
-      // On mainnet, a rate_limited response means ~24h. Stop immediately.
-      if (waitMs > 3_600_000) {
-        return { success: false, network, error: `rate_limited_long_wait_ms:${waitMs}` };
-      }
-      await new Promise((r) => setTimeout(r, waitMs));
-      continue;
-    }
-    if (errorCode === 'invalid_signature') {
-      // Re-fetch challenge in case it rotated
-      continue;
-    }
-    if (['faucet_empty', 'sbc_not_configured', 'internal_error'].includes(errorCode)) {
-      return { success: false, network, error: errorCode };
-    }
-  }
-
-  return { success: false, network, error: 'max_attempts_exceeded' };
-}
-
-// Testnet — create a throwaway wallet and sign the configured challenge
-const testnetResult = await dripWithRetry(account.address, account, 'testnet');
-console.log('Testnet result:', JSON.stringify(testnetResult, null, 2));
-
-// Mainnet — use an existing wallet with an approved signer; signature currently required
-// const mainnetAccount = privateKeyToAccount(process.env.PRIVATE_KEY as `0x${string}`);
-// const mainnetResult = await dripWithRetry(mainnetAccount.address, mainnetAccount, 'mainnet');
-// console.log('Mainnet result:', JSON.stringify(mainnetResult, null, 2));
-
-// If you only have an address and no signer on testnet (unsigned-only):
-// dripWithRetry(addressOnly, null, 'testnet');
-// NOTE: the currently deployed services require a signature, so address-only
-// calls return immediately with signature_required_but_no_signer.
+const publicClient = createPublicClient({ chain: radiusTestnet.chain, transport: http() });
+const receipt = await publicClient.waitForTransactionReceipt({ hash: drip.txHash });
+if (receipt.status !== 'success') throw new Error('Faucet transaction reverted');
+console.log('Funded address:', wallet.address, 'transaction:', drip.txHash);
 ```
+
+For mainnet, choose `network: 'mainnet'` deliberately and use an existing,
+approved signer. If you only have an address, this signed flow cannot run; use
+the web faucet or obtain signer access through the wallet owner. Do not create
+an unmanaged wallet or ask anyone to paste a private key.
 
 ## Agent-created wallet
 

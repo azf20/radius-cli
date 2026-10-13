@@ -25,9 +25,23 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0 # compare the plugin version with the PR base
           persist-credentials: false
       - name: Validate plugin structure and scenarios
         run: python3 scripts/validate_plugin.py
+      - name: Require a plugin version bump for release content
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: python3 scripts/validate_plugin.py --base-ref "$BASE_REF"
+      - name: Install Claude Code
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash -s 2.1.272
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Validate Claude plugin and marketplace
+        run: |
+          claude plugin validate plugins/radius --strict
+          claude plugin validate . --strict
 
   eval:
     needs: validate
@@ -49,8 +63,6 @@ jobs:
         run: |
           curl -fsSL https://claude.ai/install.sh | bash -s 2.1.272
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Validate Claude plugin
-        run: claude plugin validate plugins/radius
       - name: Run Claude plugin evals
         working-directory: plugins/radius
         shell: bash

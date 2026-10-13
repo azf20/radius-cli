@@ -1,6 +1,6 @@
 {
   "name": "radius-cli",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "CLI wallet for the Radius network \u2014 like cast, with a built-in account",
   "type": "module",
   "bin": {
@@ -13,7 +13,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "build": "tsc -b . && chmod +x dist/index.js",

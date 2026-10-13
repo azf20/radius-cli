@@ -1,31 +1,35 @@
 {
   "name": "radius-monorepo",
   "private": true,
-  "description": "Radius CLI wallet and SDK",
+  "description": "Radius CLI wallet, SDK and developer docs",
   "license": "MIT",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
-    "build": "pnpm --filter './packages/*' run build",
-    "test": "pnpm --filter './packages/*' run test",
-    "typecheck": "pnpm --filter './packages/*' run typecheck",
+    "build": "pnpm --filter './packages/*' --filter '!radius-docs' run build",
+    "changeset": "changeset",
     "eval:payments": "pnpm build && node evaluations/agent-payments/run.mjs",
     "eval:payments:agent": "pnpm build && node evaluations/agent-payments/agent.mjs",
     "eval:payments:live": "node evaluations/agent-payments/live.mjs",
-    "changeset": "changeset",
-    "version-packages": "changeset version && pnpm install --lockfile-only",
-    "release": "pnpm build && changeset publish"
+
+    "release": "pnpm build && changeset publish",
+    "test": "pnpm --filter './packages/*' --filter '!radius-docs' run test",
+    "typecheck": "pnpm --filter './packages/*' --filter '!radius-docs' run typecheck",
+    "version-packages": "changeset version && pnpm install --lockfile-only"
   },
   "packageManager": "pnpm@10.34.5",
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild",
       "workerd"
-    ]
+    ],
+    "overrides": {
+      "mppx>viem": "2.57.1"
+    }
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.3"

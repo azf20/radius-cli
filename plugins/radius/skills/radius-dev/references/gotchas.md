@@ -264,7 +264,7 @@ async function readNonce(
 
 > **For full x402 implementation details, see the x402 skill.**
 
-x402 on Radius supports two settlement methods. Which one applies depends on the facilitator's `/supported` response.
+x402 on Radius supports multiple payment schemes and transfer methods. Check the facilitator's `/supported` response and the server's actual 402 offer before choosing one.
 
 ### Permit2 flow (`permit2`) — recommended
 
@@ -272,19 +272,13 @@ The payer signs a Permit2 `SignatureTransfer` message. The facilitator submits i
 
 - The **spender** in the signed Permit2 message is the `x402ExactPermit2Proxy` at `0x402085c248EeA27D92E8b30b2C58ed07f9E20001` (same across all supported EVM chains — see the [x402 exact EVM spec](https://github.com/coinbase/x402/blob/main/specs/schemes/exact/scheme_exact_evm.md)).
 - Integrators do **not** need to discover or fund a facilitator-specific settlement wallet.
-- The payer must have approved the Permit2 contract (`0x000000000022D473030F116dDEE9F6B43aC78BA3`) for the payment token beforehand.
+- The payer needs a token allowance for Permit2. The `eip2612GasSponsoring` extension can establish it during the first payment when the facilitator advertises support; otherwise the SDK can send a separate approval.
 
-### EIP-2612 flow (`eip2612GasSponsoring`)
+### EIP-2612 gas sponsoring extension
 
-The facilitator uses a two-step on-chain settlement:
+`eip2612GasSponsoring` is an extension to the Permit2 payment flow, not a separate payment scheme. It lets a fresh SBC wallet sign an EIP-2612 permit granting the Permit2 contract an allowance while the facilitator pays the transaction gas. The x402 payment is still authorized with the Permit2 signature and settled through the proxy.
 
-1. `permit(owner, spender, value, deadline, v, r, s)` — sets ERC-20 allowance
-2. `transferFrom(owner, paymentAddress, value)` — moves tokens
-
-Both transactions are sent by the facilitator from its own settlement wallet (the integrator does not operate this wallet). This means:
-- The facilitator's settlement wallet address is the `spender` in the EIP-2612 permit.
-- The facilitator covers gas (RUSD).
-- The `paymentAddress` (token recipient) can differ from the facilitator's settlement wallet.
+The EIP-2612 permit's spender is the canonical Permit2 contract (`0x000000000022D473030F116dDEE9F6B43aC78BA3`), not the facilitator or merchant. Use `createRadiusFetch` from `radius-sdk/client` for buyer signing so the permit and payment signatures match the advertised offer.
 
 ---
 

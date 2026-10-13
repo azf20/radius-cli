@@ -1,9 +1,11 @@
 # radius-sdk
 
-Accept and make [Radius](https://radiustech.xyz) payments over standard [x402 v2](https://x402.org).
+Accept and make [Radius](https://radiustech.xyz) payments over standard [x402 v2](https://x402.org),
+and optionally [MPP](https://mpp.dev) (see [Protocols](#protocols-x402-and-mpp)).
 Sellers run on any stack that speaks web-standard `Request`/`Response` (Cloudflare Workers, Bun,
 Deno, Node, Next.js and SvelteKit route handlers), on Hono, or on Express / Next.js through the
-upstream x402 adapters. SBC is the default currency, mainnet the default network.
+upstream x402 adapters. Radius mainnet and SBC are the defaults; Base (USDC) and any other EVM
+chain can be added alongside, see [Networks and currency](#networks-and-currency).
 
 Pre-1.0: minor versions may change the API. Release notes are in [CHANGELOG.md](./CHANGELOG.md).
 
@@ -50,7 +52,7 @@ across the full dependency tree depends on compatible ranges and the package man
 
 The payment configuration is the same everywhere; only the wrapper changes.
 
-**Any web-standard runtime** (Cloudflare Workers without a framework, Bun, Deno, Node 18+,
+**Any web-standard runtime** (Cloudflare Workers without a framework, Bun, Deno, Node 22+,
 Next.js / SvelteKit / Remix route handlers): a handler that takes a `Request` and returns a
 `Response`. Paid handlers receive the settled receipt.
 
@@ -58,7 +60,7 @@ Next.js / SvelteKit / Remix route handlers): a handler that takes a `Request` an
 import { radiusPayments } from 'radius-sdk/server';
 
 const pay = radiusPayments({
-  network: 'testnet',                 // default 'mainnet'; or a custom instance, see below
+  network: 'testnet',                 // default 'mainnet'; or 'base', 'base-sepolia', … see below
   payTo: '0xYourWallet',              // or (request) => …
   routes: {
     'GET /api/lookup': { price: '$0.001', description: 'One lookup' },
@@ -149,10 +151,13 @@ What you get, on the wire, with no Radius-specific client knowledge required:
   `radius.server.initialize()` yourself where module-scope I/O is forbidden). Server bundle is
   ~65 KiB gzipped, no viem.
 
-Any x402 v2 client can pay it: verified with `radius-cli wallet x402` (which uses
+Any x402 v2 client can pay it: verified with `radius-cli wallet pay` (which uses
 `createRadiusFetch` from 0.2.0, and paid the SDK's 402s with its hand-rolled client before that)
 against `examples/worker-plain` under `wrangler dev`, `examples/express-seller` on Node, and the
 Hono `examples/worker-seller`, all on testnet.
+
+Add `mpp: { secretKey }` and the same routes also accept MPP payments; see
+[Protocols](#protocols-x402-and-mpp).
 
 ## Make payments (buyer / agent)
 
@@ -170,15 +175,26 @@ const res = await payFetch('https://seller.example/api/lookup?ip=1.2.3.4');
 const receipt = getPaymentReceipt(res, payFetch.network);   // { success, transaction, payer, explorerUrl, … }
 ```
 
-- Pays only on the configured network and asset; anything else throws a `RadiusPaymentError`
-  with a `code` (`network_mismatch`, `asset_mismatch`, `no_compatible_offer`, `price_above_limit`,
-  `declined`, `payment_rejected`, …) before anything is signed. Of the compatible offers the first
-  one within `maxPerRequest` is taken, in the server's order (its preference), the same as
-  `radius-cli`. `payment_rejected` and `invalid_challenge` carry the server's `Response` in
-  `details.response` so you can log what it said.
+- Pays x402 and [MPP](#protocols-x402-and-mpp) challenges, x402 first when a server offers both.
+- Pays only on the configured network(s), each in its asset; anything else throws a
+  `RadiusPaymentError` with a `code` (`network_mismatch`, `asset_mismatch`, `no_compatible_offer`,
+  `price_above_limit`, `insufficient_balance`, `declined`, `payment_rejected`, …) before anything is signed. Of the
+  compatible offers the first one within `maxPerRequest` is taken: networks in your order, offers
+  on a network in the server's order (its preference), the same as `radius-cli`.
+  `payment_rejected` and `invalid_challenge` carry the server's `Response` in `details.response`
+  so you can log what it said.
+- Several networks: `networks: ['mainnet', 'base']` instead of `network` pays on whichever of them
+  the server accepts, preferring the first. `offer.network` says which one an offer is on (its
+  `asset` has the symbol and decimals), a USD `maxPerRequest` is converted for each network's
+  asset, and `payFetch.on('base')` gives the wallet helpers below for that network. When the
+  server accepts more than one of them, the payer's balance on each is read first and the first
+  network in your order that covers the price wins, so a wallet funded only on Base still pays a
+  server that also takes Radius; none funded throws `insufficient_balance`, naming each.
+  `preferFunded: false` skips the reads and keeps pure preference order. An injected wallet (MetaMask) signs only for the chain it is connected to, so it takes
+  that one network.
 - The signing window (`validBefore` / Permit2 `deadline`) is the server's `maxTimeoutSeconds`
   capped at 600 s: an authorisation the facilitator never settles stays redeemable until then.
-- Schemes, a superset of what `radius-cli wallet x402` pays: x402 v2 `exact` (Permit2 or EIP-3009)
+- Schemes, a superset of what `radius-cli wallet pay` pays: x402 v2 `exact` (Permit2 or EIP-3009)
   and `upto` (Permit2 via the x402UptoPermit2Proxy, witness bound to the facilitator address the
   402 names), plus x402 v1 `exact` (EIP-3009, challenge in the JSON body, payment in `X-PAYMENT`).
   The offer passed to `onPaymentRequired` says which (`offer.scheme`, `offer.x402Version`). For
@@ -194,11 +210,13 @@ const receipt = getPaymentReceipt(res, payFetch.network);   // { success, transa
   it does not, the SDK sends one unlimited approval from the signer (`permit2Approval: 'auto'`,
   the default; `'never'` throws `approval_required`). `onApprovalRequired` sees every allowance
   change the client makes, with `request.reason` (`payment`, `approvePermit2`, `approve`), and
-  can veto it (`declined`, carrying the request). Gas for that
-  one transaction comes from SBC via Turnstile, so keep ~0.01 SBC spare.
+  can veto it (`declined`, carrying the request). Gas for that one transaction comes from SBC via
+  the Turnstile on Radius, so keep ~0.01 SBC spare; elsewhere it is the chain's native token (ETH
+  on Base).
 - `maxPerRequest` is a per-request ceiling, **not** a cumulative budget. An agent that loops can
   exceed any total unless you enforce one around it.
-- Wallet helpers on the same object: `address`, `balance()` (SBC only), `balances()` (native RUSD,
+- Wallet helpers on the same object, for the first network (`payFetch.on(network)` for the
+  others): `address`, `balance()` (the payment asset only), `balances()` (native RUSD,
   SBC and the aggregate, separately; see [Balances](#balances-native-rusd-vs-stablecoins)),
   `send(to, '$0.05')`, `permit2Allowance()`, `approvePermit2()`, `getSettlement(txHash)` to
   reconcile a payment on-chain before charging again, `fund()` for a faucet drip (testnet ~0.5 SBC,
@@ -243,9 +261,9 @@ import { transfer, getAllowance } from 'radius-sdk/client';
 await transfer(wallet, { token: '0x…', to, amount: '3' });   // a bare address: decimals() is read on-chain
 ```
 
-- **Default token.** On the Radius presets (mainnet, testnet, recognised by chain id) every action
-  defaults to the network's payment asset, SBC. A client on any other chain has no default: a
-  custom `RadiusNetwork`'s `asset` is not visible from `client.chain`, and quietly using SBC's
+- **Default token.** On the preset networks (recognised by chain id) every action defaults to the
+  network's payment asset: SBC on Radius, USDC on Base. A client on any other chain has no
+  default: a custom network's `asset` is not visible from `client.chain`, and quietly using SBC's
   address would send `approve` / `transfer` to the wrong contract, so the action throws a `config`
   error until you pass `token`, or extend with `erc20Actions({ network })` (checked against the
   client's chain) or `erc20Actions({ token: network.asset })`.
@@ -366,48 +384,122 @@ tokens are reported in `tokens` but not valued 1:1 in `total`.
 
 ## Networks and currency
 
+| Preset | Chain | Asset | Default facilitator |
+| --- | --- | --- | --- |
+| `'mainnet'` / `'radius'` (default) | Radius, 723487 | SBC | Radius |
+| `'testnet'` / `'radius-testnet'` | Radius testnet, 72344 | SBC | Radius testnet |
+| `'base'` | Base, 8453 | USDC | none: sellers name one |
+| `'base-sepolia'` | Base Sepolia, 84532 | USDC | x402.org |
+
 ```ts
-import { radiusMainnet, radiusTestnet, radiusMainnetChain, radiusTestnetChain, defineRadiusNetwork, resolveNetwork } from 'radius-sdk';
+import { radiusTestnet, baseSepolia, definePaymentNetwork, resolveNetwork } from 'radius-sdk';
 import { createPublicClient, http } from 'viem';
 
 resolveNetwork('testnet', { rpcUrl: 'https://rpc.testnet.radiustech.xyz/YOUR_KEY' });
-defineRadiusNetwork({ chainId: 4242, rpcUrl, facilitatorUrl, asset: { address: '0x…', symbol: 'USDX' } });
-defineRadiusNetwork({ chain: myViemChain, facilitatorUrl });   // or start from a viem Chain
+resolveNetwork('base', { rpcUrl: 'https://base-mainnet.example/KEY' });
 
-// Every RadiusNetwork carries its viem Chain; use it for your own viem clients.
+// Any other EVM chain: a viem Chain plus its payment asset (and a facilitator for sellers).
+const arbitrum = definePaymentNetwork({
+  chain: myViemChain,
+  asset: { address: '0x…', symbol: 'USDC', decimals: 6, name: 'USD Coin', version: '2' },   // EIP-712 domain
+  facilitatorUrl: 'https://facilitator.example',
+});
+
+// Every network carries its viem Chain; use it for your own viem clients.
 createPublicClient({ chain: radiusTestnet.chain, transport: http() });
 ```
 
-Chain identity lives in viem `Chain` objects: `radiusMainnetChain` (id 723487) and
-`radiusTestnetChain` (id 72344), native currency RUSD, defined here with the same values as
-viem's `radius` / `radiusTestnet` (importing `viem/chains` would load every chain viem knows). A `RadiusNetwork` is one of those
-chains (`network.chain`, the source of truth) plus the Radius-specific `facilitatorUrl`,
-`faucetUrl` and `asset`; `chainId`, `network` (CAIP-2 `eip155:<id>`), `rpcUrl`, `explorerUrl`
-and `testnet` are derived from the chain. An `rpcUrl` override yields a network whose `chain`
-also uses that RPC.
+Chain identity lives in viem `Chain` objects (`radiusMainnetChain`, `radiusTestnetChain`,
+`baseChain`, `baseSepoliaChain`), defined here with the same values as viem's own (importing
+`viem/chains` would load every chain viem knows). A `PaymentNetwork` is one of those chains
+(`network.chain`, the source of truth) plus its payment `asset`, default `facilitatorUrl`,
+`faucetUrl` (Radius only), `v1Names` (how x402 v1 challenges name it, e.g. `base`) and `radius`
+(true on Radius: `eth_getBalance` includes convertible stablecoins); `chainId`, `network` (CAIP-2
+`eip155:<id>`), `rpcUrl`, `explorerUrl` and `testnet` are derived from the chain. An `rpcUrl`
+override yields a network whose `chain` also uses that RPC.
 
 Both `radiusPayments` and `createRadiusFetch` accept `network`, plus `rpcUrl`, `facilitatorUrl`,
-and `asset` overrides. The asset defaults to SBC (6 decimals, permit domain "Stable Coin" v1);
-prices in USD strings assume a USD-pegged asset.
+and `asset` overrides. USD prices (`'$0.01'`) are converted with the asset's decimals and assume a
+USD-pegged asset, which every preset is.
 
-**Facilitator.** Defaults to the Radius facilitator for the network, with a live `/supported`
-lookup. Options: `facilitator: { url, apiKey }` for another hosted facilitator,
-`facilitator: { live: false }` to skip the lookup and use the built-in Radius answer (faster cold
-start, but stale if the facilitator changes), or `facilitator: myClient` where `myClient`
-implements `FacilitatorClient` from `@x402/core/server` (`getSupported`, `verify`, `settle`) for a
-self-hosted facilitator with your own auth or routing.
+**Accepting more than one network.** `networks` instead of `network` makes every route offer one
+payment option per network, in that order, each settled by its own facilitator. Base mainnet has
+no default facilitator, so name one:
+
+```ts
+const pay = radiusPayments({
+  networks: ['mainnet', { network: 'base', facilitator: { url: 'https://your-base-facilitator.example' } }],
+  payTo: '0xYourWallet',   // same address on every EVM chain
+  routes: { 'GET /api/lookup': '$0.001' },   // 0.001 SBC on Radius, 0.001 USDC on Base
+});
+```
+
+Receipts (`payment.network`, `explorerUrl`) say which network a payment settled on. A price given
+as `{ amount, asset }` names one token, so it is rejected when several networks are configured.
+
+**Facilitator.** Defaults to the network's (the Radius facilitator on Radius), with a live
+`/supported` lookup. Options: `facilitator: { url, apiKey }` for another hosted facilitator,
+`facilitator: { live: false }` to skip the lookup and use the built-in Radius answer (Radius only;
+faster cold start, but stale if the facilitator changes), or `facilitator: myClient` where
+`myClient` implements `FacilitatorClient` from `@x402/core/server` (`getSupported`, `verify`,
+`settle`) for a self-hosted facilitator or one with its own auth (for example a JWT-authenticated
+hosted facilitator). With `networks`, top-level `facilitator` and overrides apply to the first
+network; give the others theirs in `{ network, facilitator }`.
+
+## Protocols: x402 and MPP
+
+Besides x402, the SDK speaks [MPP](https://mpp.dev) (the Machine Payments Protocol: the HTTP
+`Payment` authentication scheme, [draft-httpauth-payment](https://paymentauth.org)) for its `evm`
+charge method. Both end in the same thing, an EIP-3009 `transferWithAuthorization` of the network's
+stablecoin, settled by the same x402 facilitator; only the envelope differs:
+
+| | x402 | MPP |
+| --- | --- | --- |
+| 402 | `PAYMENT-REQUIRED` (offers in `accepts`) | `WWW-Authenticate: Payment …` (one challenge per network) |
+| Paid retry | `PAYMENT-SIGNATURE` | `Authorization: Payment …` |
+| Receipt | `PAYMENT-RESPONSE` | `Payment-Receipt` |
+| Payment methods | `exact` (EIP-3009 or Permit2), `upto` | `evm` charge (EIP-3009) |
+
+**Buyers** pay either. `protocols` (default `['x402', 'mpp']`) is the preference order when a 402
+offers both; the protocol picked first, then networks in your order, except that a network your
+balance covers beats an unfunded one whichever protocol offers it. `offer.protocol` says which
+one an offer came from (an MPP offer carries its `challenge`), and receipts carry `protocol` too.
+The credential goes in `Authorization`, so a request that already sends its own `Authorization`
+header is not paid over MPP. MPP payments need no approval and no gas.
+
+**Sellers** opt in per server:
+
+```ts
+const pay = radiusPayments({
+  networks: ['mainnet', { network: 'base', facilitator: { url: 'https://your-base-facilitator.example' } }],
+  payTo: '0xYourWallet',
+  routes: { 'GET /api/lookup': '$0.001' },
+  mpp: { secretKey: env.MPP_SECRET_KEY },   // ≥ 32 random characters: `openssl rand -base64 32`
+});
+```
+
+Every 402 then also carries an MPP challenge per network, mirroring the x402 offers (same price,
+asset, recipient and expiry). A credential is checked without stored state, its challenge id
+being an HMAC of the challenge's parameters under `secretKey`, so every instance serving the same
+routes needs the same key. The check covers the realm (`mpp.realm`, default the request's host),
+expiry, the route's current price, and the authorization's nonce, which is bound to the challenge;
+the facilitator then verifies and settles it as an x402 `exact` EIP-3009 payment, before or after
+the handler as `settle` says. The handler's `payment` and `onSettled` receive the receipt with
+`protocol: 'mpp'`, and the response carries `Payment-Receipt`. MPP is served by
+`radiusPayments()` (web-standard and Hono); routes mounted through the upstream x402 adapters only
+see x402. Interop is tested against `mppx`, the reference implementation, in both directions.
 
 ## Layout
 
 | Path | What |
 | --- | --- |
-| `src/` | `networks`, `balances`, `erc20`, `permit2`, `amounts`, `receipt`, `settlement`, `schemes`, `env`, `errors`; `server/` (seller core: web-standard handler, x402 resource server, facilitator, scheme); `hono/` (Hono wrapper); `client/` (buyer) |
+| `src/` | `networks`, `balances`, `erc20`, `permit2`, `amounts`, `receipt`, `settlement`, `schemes`, `env`, `errors`, `mpp` (MPP wire format); `server/` (seller core: web-standard handler, x402 resource server, facilitator, scheme, MPP payments); `hono/` (Hono wrapper); `client/` (buyer) |
 | `examples/worker-plain` | Worker with no framework, the web-standard handler: free `/`, paid `/api/lookup` and `/api/query` (`pnpm --filter radius-worker-plain dev`, port 8788) |
 | `examples/worker-seller` | Same API on Hono (`pnpm --filter radius-worker-seller dev`) |
 | `examples/express-seller` | Same API on Express through `@x402/express` (`pnpm --filter radius-express-seller start`, port 8789) |
 | `examples/astro-seller` | Astro API route: validate the article before charging, then deliver it paid (`pnpm --filter radius-astro-seller dev`, port 8790) |
 | `examples/agent-buyer` | `buy.mjs` (pay a URL), `fresh-wallet.mjs` (gasless proof from a new wallet), `permit2-pull.mjs` (sign a Permit2 transfer off-chain, pull it from another account) |
 | `examples/demo-dapp` | Test-dapp style page exercising both sides in the browser (burner wallet or MetaMask) |
-| `test/` | unit tests (facilitator and RPC mocked; `client-parity.test.ts` pins the wire format against radius-cli's; `balances.test.ts` runs the native-balance init code in a real EVM; `erc20.semantics.test.ts` runs the ERC-20 actions against `evmNode.ts`, a JSON-RPC node backed by @ethereumjs/evm executing the forge-compiled `fixtures/TestToken` (rebuild with `fixtures/build.sh` after editing the .sol; the artifact is committed because CI has no forge)); `test/e2e` real settlement, balance reconciliation and ERC-20 round trips on testnet or mainnet (`RADIUS_E2E=1 RADIUS_PRIVATE_KEY=… [RADIUS_NETWORK=mainnet] pnpm test:e2e`) |
+| `test/` | unit tests (facilitator and RPC mocked; `client-parity.test.ts` pins the wire format against radius-cli's; `balances.test.ts` runs the native-balance init code in a real EVM; `erc20.semantics.test.ts` runs the ERC-20 actions against `evmNode.ts`, a JSON-RPC node backed by @ethereumjs/evm executing the forge-compiled `fixtures/TestToken` (rebuild with `fixtures/build.sh` after editing the .sol; the artifact is committed because CI has no forge); `mpp*.test.ts` check MPP against `mppx`, the reference implementation, in both directions); `test/e2e` real settlement, balance reconciliation and ERC-20 round trips on testnet or mainnet (`RADIUS_E2E=1 RADIUS_PRIVATE_KEY=… [RADIUS_NETWORK=mainnet] pnpm test:e2e`) |
 
-Built on `@x402/core` (server and client), `@x402/evm` (client signing only) and viem.
+Built on `@x402/core` (server and client), `@x402/evm` (client signing only), viem, and `@noble/hashes` (MPP's keccak-256 on the viem-free server).

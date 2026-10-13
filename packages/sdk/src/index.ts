@@ -1,28 +1,27 @@
 export {
   SBC,
+  USDC_BASE,
+  USDC_BASE_SEPOLIA,
   PERMIT2_ADDRESS,
   X402_EXACT_PERMIT2_PROXY,
   radiusMainnet,
   radiusTestnet,
+  baseMainnet,
+  baseSepolia,
+  PRESET_NETWORKS,
+  NETWORK_NAMES,
   radiusMainnetChain,
   radiusTestnetChain,
-  defineRadiusNetwork,
+  baseChain,
+  baseSepoliaChain,
+  definePaymentNetwork,
   resolveNetwork,
+  presetForChainId,
+  isNetworkId,
   chainIdFromCaip2,
   explorerTxUrl,
 } from './networks.js';
-export type {
-  Address,
-  Caip2,
-  RadiusAsset,
-  RadiusNetwork,
-  NetworkName,
-  NetworkInput,
-  NetworkOverrides,
-  CustomNetworkConfig,
-  CustomNetworkFromChain,
-  CustomNetworkFromChainId,
-} from './networks.js';
+export type { Address, Caip2, PaymentAsset, PaymentNetwork, PaymentNetworkConfig, NetworkName, NetworkInput, NetworkOverrides } from './networks.js';
 // Balance actions load viem, so their runtime exports live on `radius-sdk/client`; only the types are re-exported here.
 export type {
   AccountBalances,
@@ -78,9 +77,11 @@ export { toAtomic, formatAmount, resolvePrice } from './amounts.js';
 export type { Price } from './amounts.js';
 export { RadiusPaymentError } from './errors.js';
 export type { RadiusPaymentErrorCode } from './errors.js';
-export { decodePaymentReceipt, getPaymentReceipt, parseUptoSettlementAmount, PAYMENT_RESPONSE_HEADER } from './receipt.js';
+export { decodePaymentReceipt, decodeMppReceipt, getPaymentReceipt, parseUptoSettlementAmount, PAYMENT_RESPONSE_HEADER } from './receipt.js';
 export type { PaymentReceipt } from './receipt.js';
 export { radiusEnv } from './env.js';
 export type { RadiusEnvConfig } from './env.js';
 export { SUPPORTED_SCHEMES, describeSupportedSchemes } from './schemes.js';
+export { parseMppChallenges, parseMppReceipt, MPP_RECEIPT_HEADER } from './mpp.js';
+export type { MppChallenge, MppReceipt, MppChargeRequest } from './mpp.js';
 export type { SupportedScheme } from './schemes.js';
