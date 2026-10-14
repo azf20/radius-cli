@@ -259,9 +259,14 @@ function submit(url, header, init = {}) {
   return fetch(url, { ...init, headers: { ...init.headers, [name]: header } });
 }
 
+/** The inherited environment minus `RADIUS_*`, so a developer's wallet settings cannot leak into the CLI under test. */
+function withoutRadiusEnv() {
+  return Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('RADIUS_')));
+}
+
 function runCli(args, env) {
   return new Promise((done, fail) => {
-    const child = spawn(process.execPath, [CLI, ...args], { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [CLI, ...args], { env: { ...withoutRadiusEnv(), ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     child.stdout.setEncoding('utf8').on('data', (s) => { stdout += s; });
@@ -301,17 +306,20 @@ async function integrate(framework, dir) {
   const promptFile = join(dir, 'PROMPT.md');
   await writeFile(promptFile, prompt);
   // The agent gets no Radius wallet configuration: it writes code, it never pays.
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('RADIUS_')));
+  const env = withoutRadiusEnv();
   Object.assign(env, { SELL_FRAMEWORK: framework, SELL_APP_DIR: dir, SELL_PROMPT_FILE: promptFile, SELL_REPO_ROOT: ROOT });
   const timeoutMs = Number(process.env.SELL_INTEGRATOR_TIMEOUT_MS ?? 900_000);
   const result = await new Promise((done, fail) => {
-    const child = spawn(command, { shell: true, cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    // Own process group, so the timeout can kill the shell and everything it started.
+    const child = spawn(command, { shell: true, detached: true, cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     const keep = (s) => { output = (output + s).slice(-4000); };
     child.stdout.setEncoding('utf8').on('data', keep);
     child.stderr.setEncoding('utf8').on('data', keep);
     child.once('error', fail);
-    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+    const timer = setTimeout(() => {
+      try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* already gone */ } }
+    }, timeoutMs);
     child.once('close', (code, signal) => { clearTimeout(timer); done({ code, signal, outputTail: output }); });
   });
   return { integrator: 'command', ...result };

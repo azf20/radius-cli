@@ -47,8 +47,8 @@ async function main() {
   Object.assign(partial, { stage: 'response-received', httpStatus: response.status,
     sellerReceipt: receipt && { success: receipt.success, transaction: receipt.transaction, network: receipt.network } });
   if (receipt?.transaction) process.stderr.write(`Live evaluation transaction: ${receipt.transaction}\n`);
-  const delivery = await response.json();
   assert.equal(response.status, 200, 'paid resource must be delivered');
+  const delivery = await response.json();
   assert.equal(delivery.result, 'lookup complete');
   assert.equal(receipt?.success, true, 'seller must report successful settlement');
   assert.match(receipt.transaction ?? '', /^0x[0-9a-fA-F]{64}$/);
@@ -56,12 +56,18 @@ async function main() {
   assert.equal(delivery.transaction, receipt.transaction);
   assert.equal(settled.length, 1, 'seller callback must record one settlement');
 
-  const chain = await buyer.getSettlement(receipt.transaction);
-  partial.stage = 'chain-reconciled';
+  // The RPC node may not have the receipt yet when the facilitator answers, so poll briefly.
+  let chain;
+  for (let attempt = 1; attempt <= 6; attempt++) {
+    chain = await buyer.getSettlement(receipt.transaction);
+    if (chain) break;
+    if (attempt < 6) await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
   assert.equal(chain?.status, 'success', 'chain transaction must have succeeded');
   const transfers = chain.transfers.filter((t) =>
     t.from.toLowerCase() === buyer.address.toLowerCase() && t.to.toLowerCase() === payTo.toLowerCase());
   assert.equal(transfers.reduce((sum, t) => sum + t.amount, 0n), PRICE, 'chain transfer must match buyer, seller and amount');
+  partial.stage = 'chain-reconciled';
 
   const report = {
     suite: 'agent-payments-live', scenarioVersion: 1, sourceCommit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim(),
