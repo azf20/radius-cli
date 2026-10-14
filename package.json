@@ -11,11 +11,16 @@
   ],
   "scripts": {
     "build": "pnpm --filter './packages/*' --filter '!radius-docs' run build",
+    "changeset": "changeset",
+    "eval:payments": "pnpm build && node evaluations/agent-payments/run.mjs",
+    "eval:payments:agent": "pnpm build && node evaluations/agent-payments/agent.mjs",
+    "eval:payments:live": "node evaluations/agent-payments/live.mjs",
+    "eval:payments:sell": "pnpm build && node evaluations/agent-payments/sell.mjs",
+
+    "release": "pnpm build && changeset publish",
     "test": "pnpm --filter './packages/*' --filter '!radius-docs' run test",
     "typecheck": "pnpm --filter './packages/*' --filter '!radius-docs' run typecheck",
-    "changeset": "changeset",
-    "version-packages": "changeset version && pnpm install --lockfile-only",
-    "release": "pnpm build && changeset publish"
+    "version-packages": "changeset version && pnpm install --lockfile-only"
   },
   "packageManager": "pnpm@10.34.5",
   "pnpm": {
