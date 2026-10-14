@@ -5,7 +5,7 @@
   "author": {
     "name": "Radius Technology Systems"
   },
-  "homepage": "https://github.com/radiustechsystems/radius-cli/tree/main/plugins/radius",
-  "repository": "https://github.com/radiustechsystems/radius-cli",
+  "homepage": "https://github.com/radiustechsystems/tools/tree/main/plugins/radius",
+  "repository": "https://github.com/radiustechsystems/tools",
   "license": "MIT"
 }
