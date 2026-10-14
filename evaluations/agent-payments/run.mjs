@@ -180,16 +180,20 @@ function createFixture() {
 
 function runCli(args, env, stdin = '') {
   return new Promise((resolveRun, reject) => {
-    const child = spawn(process.execPath, [CLI, ...args], { env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [CLI, ...args], { env: { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('RADIUS_'))), ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     child.stdout.setEncoding('utf8').on('data', (s) => { stdout += s; });
     child.stderr.setEncoding('utf8').on('data', (s) => { stderr += s; });
     child.once('error', reject);
+    // A CLI that exits before reading its input (EPIPE) fails this case rather than crashing the runner.
+    let stdinError;
+    child.stdin.on('error', (error) => { stdinError = error; });
     const timeout = setTimeout(() => child.kill('SIGKILL'), 30_000);
     child.once('close', (code, signal) => {
       clearTimeout(timeout);
-      resolveRun({ code, signal, stdout, stderr });
+      if (stdinError && stdin) reject(new Error(`CLI exited ${code ?? signal} before reading its stdin: ${stdinError.message}`));
+      else resolveRun({ code, signal, stdout, stderr });
     });
     child.stdin.end(stdin);
   });

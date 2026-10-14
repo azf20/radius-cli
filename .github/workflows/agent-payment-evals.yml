@@ -38,16 +38,20 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Build once; the eval scripts run directly because `pnpm eval:*` would each rebuild.
+      - name: Build
+        run: pnpm build
+
       - name: Run offline evaluation
-        run: pnpm eval:payments
+        run: node evaluations/agent-payments/run.mjs
 
       - name: Run agent evaluation
         if: ${{ !cancelled() }}
-        run: pnpm eval:payments:agent
+        run: node evaluations/agent-payments/agent.mjs
 
       - name: Run seller evaluation
         if: ${{ !cancelled() }}
-        run: pnpm eval:payments:sell
+        run: node evaluations/agent-payments/sell.mjs
 
       - name: Upload eval reports
         if: ${{ !cancelled() }}
