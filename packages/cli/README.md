@@ -90,7 +90,7 @@ Body goes to stdout; payment confirmation and (optionally, with `--include`) hea
 
 ## Check a seller (`sell check`)
 
-Check your own paid endpoint before buyers see it. `sell check` requests the URL without paying and audits the `402` with [`radius-sdk`](../sdk): the x402 `PAYMENT-REQUIRED` challenge (decoded with `@x402/core`, as the SDK does) and any MPP `WWW-Authenticate: Payment` challenge.
+Check your own paid endpoint before buyers see it. `sell check` requests the URL without paying and audits the `402` with [`radius-sdk`](../sdk): the x402 `PAYMENT-REQUIRED` challenge (decoded with `@x402/core`, as the SDK does) and any MPP `WWW-Authenticate: Payment` challenge. Like the SDK buyer, it also reads an x402 challenge from a JSON body when there is no `PAYMENT-REQUIRED` header (v1 sellers); a malformed offer is reported as a failed check, not a crash.
 
 ```bash
 radius-cli sell check http://127.0.0.1:3000/api/report
@@ -105,9 +105,9 @@ For each x402 offer it checks that the network is a known preset, the asset is t
 - `-X, --method <verb>`, `-H`, `-d`: the request, as for `wallet pay` (default `GET`).
 - `--probe-head`: also send an unpaid `HEAD` and warn when it answers `2xx` (routers serve `HEAD` with the `GET` handler, which x402 routes keyed `GET` do not charge).
 - `--pay --threshold <decimal>`: when every check passed, make one paid request from the local wallet (`RADIUS_HOME` applies) and check that a receipt comes back. It pays on testnet unless `--network mainnet` is passed explicitly; `RADIUS_NETWORK` and the config file do not switch it to mainnet. `--networks` works as for `wallet pay`.
-- `--timeout <ms>`: per request, default 15000.
+- `--timeout <ms>`: per request, default 15000. The paid request of `--pay` gets four times that (at least 60 s), since the seller settles before it answers; if it still fails after the payment was sent, the message says the payment may have settled.
 
-Each check prints as `ok`, `warn`, `FAIL`, `skip` or `info`. Exit code `0` means no check failed (warnings allowed), `1` that one did, `2` invalid flags.
+Each check prints as `ok`, `warn`, `FAIL`, `skip` or `info`. Exit code `0` means no check failed (warnings allowed), `1` that one did, `2` invalid flags (a malformed `-H`, an unreadable `-d @file`, an unknown `--network`/`--networks`, a bad `--price` or `--threshold`).
 
 ## Read commands
 

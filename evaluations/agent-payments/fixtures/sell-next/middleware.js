@@ -29,10 +29,14 @@ const payAfter = radiusPayments({
 
 const KNOWN_SLUGS = new Set(['hello', 'world']);
 
-/** Agents pay: a payment header, or no browser User-Agent. Humans read free. Spoofable, see references/publishers.md. */
+const AI_AGENT_UA = /GPTBot|OAI-SearchBot|ChatGPT-User|ClaudeBot|Claude-User|Claude-SearchBot|PerplexityBot|Perplexity-User|CCBot|Bytespider|Amazonbot|meta-externalagent|Diffbot/i;
+
+/** Agents pay: a payment header, a Web Bot Auth claim, a known AI agent UA (many send `Mozilla/`), or no browser User-Agent. Humans read free. Spoofable, see references/publishers.md. */
 function isAgent(req) {
   if (req.headers.has('payment-signature') || /^payment\s/i.test(req.headers.get('authorization') ?? '')) return true;
-  return !/Mozilla\//.test(req.headers.get('user-agent') ?? '');
+  if (req.headers.has('signature-agent')) return true; // Web Bot Auth: a claim until the signature is verified
+  const ua = req.headers.get('user-agent') ?? '';
+  return AI_AGENT_UA.test(ua) || !/^Mozilla\//.test(ua);
 }
 
 /** `next start` builds req.url from its own hostname; rebuild the public URL so resource.url is right. */

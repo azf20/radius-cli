@@ -246,7 +246,7 @@ The response body goes to stdout. Payment confirmation and, with `--include`, st
 
 ## Check a paid endpoint
 
-Use `radius-cli sell check <url>` on your own paid route, locally or deployed, to see what buyers will be asked for. It requests the URL without paying (`-X` sets the method, `-H` and `-d` work as for `wallet pay`), decodes the x402 `PAYMENT-REQUIRED` challenge and any MPP `WWW-Authenticate: Payment` challenge with [`radius-sdk`](/reference/radius-sdk), and checks:
+Use `radius-cli sell check <url>` on your own paid route, locally or deployed, to see what buyers will be asked for. It requests the URL without paying (`-X` sets the method, `-H` and `-d` work as for `wallet pay`), decodes the x402 `PAYMENT-REQUIRED` challenge (or, as the SDK buyer does, an x402 challenge in the JSON body) and any MPP `WWW-Authenticate: Payment` challenge with [`radius-sdk`](/reference/radius-sdk), and checks:
 
 - the unpaid response is a `402` marked `no-store`
 - each offer's network is known, its asset and EIP-712 domain are the network's payment asset, its amount parses (and equals `--price` at the asset's decimals), `payTo` is an address, and `maxTimeoutSeconds` is sensible
@@ -260,9 +260,9 @@ radius-cli sell check https://api.example.com/query -X post -d '{"q":1}' --facil
 radius-cli --json sell check http://localhost:8787/api/lookup --probe-head
 ```
 
-`--probe-head` also sends an unpaid `HEAD` and warns when it is served, because routers answer `HEAD` with the `GET` handler. `--pay --threshold <amount>` then makes one paid request from the local wallet and checks that a receipt comes back. It pays on testnet unless `--network mainnet` is given, whatever `RADIUS_NETWORK` says.
+`--probe-head` also sends an unpaid `HEAD` and warns when it is served, because routers answer `HEAD` with the `GET` handler. `--pay --threshold <amount>` then makes one paid request from the local wallet and checks that a receipt comes back. It pays on testnet unless `--network mainnet` is given, whatever `RADIUS_NETWORK` says. The paid request gets a longer timeout than `--timeout`, and if it still fails after the payment was sent, the report says the payment may have settled.
 
-The command prints one line per check (`ok`, `warn`, `FAIL`, `skip`, `info`); with `--json`, stdout is one object with `ok`, `offers`, `mpp`, `facilitators`, `checks` and `summary`. It exits `0` when no check failed, `1` when one did, and `2` on invalid flags.
+The command prints one line per check (`ok`, `warn`, `FAIL`, `skip`, `info`); with `--json`, stdout is one object with `ok`, `offers`, `mpp`, `facilitators`, `checks` and `summary`. It exits `0` when no check failed, `1` when one did, and `2` on invalid flags (a malformed `-H`, an unreadable `-d @file`, an unknown `--network`, a bad `--price` or `--threshold`).
 
 ## When to use other tools
 

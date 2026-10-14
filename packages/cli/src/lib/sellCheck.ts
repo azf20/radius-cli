@@ -89,6 +89,8 @@ export interface SellCheckOptions {
   };
   /** Request timeout for the seller and the facilitators (default 15 s). */
   timeoutMs?: number;
+  /** Timeout for the paid request of `--pay` (default: four times `timeoutMs`, at least 60 s): the seller settles before it answers. */
+  paidTimeoutMs?: number;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -97,6 +99,30 @@ const KNOWN_SCHEMES = new Set(['exact', 'upto']);
 const TRANSFER_METHODS = new Set(['eip3009', 'permit2']);
 /** A per-request price above this many display units (USD for every preset) is more likely a decimals mistake than a real price. */
 const SUSPICIOUS_DISPLAY_AMOUNT = 1000n;
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** Two atomic amount strings are the same number ("01000" equals "1000"); anything else is unequal. */
+function sameAtomic(a: unknown, b: unknown): boolean {
+  return typeof a === 'string' && typeof b === 'string' && ATOMIC.test(a) && ATOMIC.test(b) && BigInt(a) === BigInt(b);
+}
+
+/**
+ * An x402 challenge in the JSON body of a 402, read as radius-sdk's buyer does (`readChallenge` in
+ * radius-sdk/client): the x402 v1 body, or, off-spec but seen in the wild, a v2 body.
+ */
+function readBodyChallenge(body: Uint8Array): PaymentRequired | undefined {
+  if (body.length === 0) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(body));
+    if (isRecord(parsed) && (parsed.x402Version === 1 || parsed.x402Version === 2)) return parsed as unknown as PaymentRequired;
+  } catch {
+    /* not JSON */
+  }
+  return undefined;
+}
 
 function addressEq(a: unknown, b: unknown): boolean {
   return typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
@@ -195,15 +221,23 @@ export async function checkSeller(options: SellCheckOptions): Promise<SellCheckR
 
   // 2. The x402 challenge.
   let pr: PaymentRequired | undefined;
+  let challengeFromBody = false;
   const header = first.headers.get('payment-required');
   if (!header) {
-    add('x402', 'fail', 'no PAYMENT-REQUIRED header: x402 v2 buyers find no offer (radius-sdk sellers always send one)');
+    // radius-sdk's buyer also reads a challenge from the JSON body (x402 v1, or an off-spec v2 body).
+    pr = readBodyChallenge(firstBody);
+    challengeFromBody = pr !== undefined;
+    if (!pr) add('x402', 'fail', 'no PAYMENT-REQUIRED header and no x402 challenge in the JSON body: x402 v2 buyers find no offer (radius-sdk sellers always send one)');
   } else {
     try {
       pr = decodePaymentRequiredHeader(header);
     } catch (e) {
       add('x402', 'fail', `PAYMENT-REQUIRED does not decode: ${(e as Error).message}`);
     }
+  }
+  if (pr !== undefined && !isRecord(pr)) {
+    add('x402', 'fail', 'PAYMENT-REQUIRED decodes but is not a JSON object');
+    pr = undefined;
   }
 
   // Facilitator `/supported` answers, fetched once per URL.
@@ -234,12 +268,16 @@ export async function checkSeller(options: SellCheckOptions): Promise<SellCheckR
   };
 
   const offerNetworks: PaymentNetwork[] = [];
+  /** The well-formed (object) offers of the challenge, for the MPP mirror check. */
+  const x402Offers: PaymentRequirements[] = [];
   if (pr) {
     const version = pr.x402Version as number;
     if (version !== 2) add('x402', version === 1 ? 'warn' : 'fail', `x402Version ${String(version)}: radius-sdk sellers speak v2`);
-    const accepts = Array.isArray(pr.accepts) ? (pr.accepts as PaymentRequirements[]) : [];
-    if (accepts.length === 0) add('x402', 'fail', 'PAYMENT-REQUIRED decodes but lists no offers (accepts is empty)');
+    const accepts: unknown[] = Array.isArray(pr.accepts) ? pr.accepts : [];
+    if (accepts.length === 0) add('x402', 'fail', `${challengeFromBody ? 'The challenge' : 'PAYMENT-REQUIRED'} decodes but lists no offers (accepts is ${Array.isArray(pr.accepts) ? 'empty' : 'not an array'})`);
+    else if (challengeFromBody && version === 2) add('x402', 'warn', `x402 v2 challenge found in the JSON body, not the PAYMENT-REQUIRED header: radius-sdk buyers accept it, spec-following v2 buyers read only the header; ${accepts.length} offer${accepts.length === 1 ? '' : 's'}`);
     else if (version === 2) add('x402', 'pass', `PAYMENT-REQUIRED decodes: x402 v2, ${accepts.length} offer${accepts.length === 1 ? '' : 's'}`);
+    else if (challengeFromBody) add('x402', 'info', `x402 v${String(version)} challenge read from the JSON body, as radius-sdk buyers do; ${accepts.length} offer${accepts.length === 1 ? '' : 's'}`);
     report.x402Version = version;
     report.resource = pr.resource;
 
@@ -254,11 +292,17 @@ export async function checkSeller(options: SellCheckOptions): Promise<SellCheckR
       else add('resource', 'fail', `resource.url ${resourceUrl} is not the requested URL ${options.url}: the challenge is bound to another resource`);
     }
 
-    const sponsoringDeclared = !!pr.extensions && 'eip2612GasSponsoring' in pr.extensions;
+    const sponsoringDeclared = isRecord(pr.extensions) && 'eip2612GasSponsoring' in pr.extensions;
 
     // 4. Each offer.
-    for (const [i, req] of accepts.entries()) {
+    for (const [i, offer] of accepts.entries()) {
       const at = `offer[${i}]`;
+      if (!isRecord(offer)) {
+        add(at, 'fail', `offer ${i} is not an object (${offer === null ? 'null' : Array.isArray(offer) ? 'array' : typeof offer}); buyers skip it`);
+        continue;
+      }
+      const req = offer as unknown as PaymentRequirements;
+      x402Offers.push(req);
       const network = presetFor(req.network);
       const amountRaw = version === 1 ? (req as unknown as { maxAmountRequired?: unknown }).maxAmountRequired : req.amount;
       const transfer = transferMethodOf(version, req);
@@ -308,7 +352,7 @@ export async function checkSeller(options: SellCheckOptions): Promise<SellCheckR
         if (want instanceof Error) {
           add(`${at}.amount`, 'fail', `--price ${options.price} cannot be priced in ${expected.symbol}: ${want.message}`);
         } else if (want !== undefined) {
-          if (amountRaw === want) add(`${at}.amount`, 'pass', `amount ${amountRaw} = ${display}, the expected ${options.price} at ${expected.decimals} decimals`);
+          if (atomic === BigInt(want)) add(`${at}.amount`, 'pass', `amount ${amountRaw} = ${display}, the expected ${options.price} at ${expected.decimals} decimals`);
           else {
             const ratio = BigInt(want) > 0n && atomic % BigInt(want) === 0n ? atomic / BigInt(want) : 0n;
             const exp = ratio > 1n && /^10*$/.test(ratio.toString()) ? ratio.toString().length - 1 : 0;
@@ -385,7 +429,11 @@ export async function checkSeller(options: SellCheckOptions): Promise<SellCheckR
     if (!addressEq(r.currency, asset.address)) problems.push(`currency ${String(r.currency)} is not ${asset.symbol} (${asset.address})`);
     if (r.methodDetails?.decimals !== undefined && r.methodDetails.decimals !== asset.decimals) problems.push(`decimals ${String(r.methodDetails.decimals)}, but ${asset.symbol} has ${asset.decimals}`);
     if (typeof r.amount !== 'string' || !ATOMIC.test(r.amount)) problems.push(`amount ${JSON.stringify(r.amount)} is not an atomic integer string`);
-    else if (options.price !== undefined && r.amount !== expectedAmount(options.price, asset)) problems.push(`amount ${r.amount} is not the expected ${options.price}`);
+    else if (options.price !== undefined) {
+      const want = expectedAmount(options.price, asset);
+      if (want instanceof Error) problems.push(`--price ${options.price} cannot be priced in ${asset.symbol}: ${want.message}`);
+      else if (!sameAtomic(r.amount, want)) problems.push(`amount ${r.amount} is not the expected ${options.price}`);
+    }
     if (typeof r.recipient !== 'string' || !isAddress(r.recipient, { strict: false })) problems.push(`recipient ${JSON.stringify(r.recipient)} is not an address`);
     const expires = c.expires ? Date.parse(c.expires) : Number.NaN;
     if (!Number.isFinite(expires)) problems.push('no expires');
@@ -394,8 +442,14 @@ export async function checkSeller(options: SellCheckOptions): Promise<SellCheckR
     else add(`${at}.challenge`, 'pass', `MPP evm charge ${formatAmount(BigInt(r.amount as string), asset.decimals, asset.symbol)} on ${network.name} to ${String(r.recipient)}, expires ${c.expires}`);
     // radius-sdk sellers mirror an x402 offer exactly; a challenge that mirrors none prices the route differently per protocol.
     if (pr) {
-      const mirrored = (pr.accepts as PaymentRequirements[]).some((a) => a.network === network.network && addressEq(a.asset, r.currency) && addressEq(a.payTo, r.recipient) && a.amount === r.amount);
-      add(`${at}.mirror`, mirrored ? 'pass' : 'warn', mirrored ? 'mirrors an x402 offer (amount, asset, recipient, network)' : 'matches no x402 offer: the route costs something different over MPP');
+      if (x402Offers.length === 0) add(`${at}.mirror`, 'skip', 'no well-formed x402 offer to compare with');
+      else {
+        // v1 offers name the amount `maxAmountRequired` and the network by alias ("base"); compare the same facts.
+        const v1 = pr.x402Version === 1;
+        const mirrored = x402Offers.some((a) => presetFor(a.network)?.network === network.network && addressEq(a.asset, r.currency) && addressEq(a.payTo, r.recipient) &&
+          sameAtomic(v1 ? (a as unknown as { maxAmountRequired?: unknown }).maxAmountRequired : a.amount, r.amount));
+        add(`${at}.mirror`, mirrored ? 'pass' : 'warn', mirrored ? 'mirrors an x402 offer (amount, asset, recipient, network)' : 'matches no x402 offer: the route costs something different over MPP');
+      }
     }
   }
 
@@ -472,11 +526,26 @@ async function payOnce(options: SellCheckOptions, method: string, add: (id: stri
   const pay = options.pay!;
   let offer: PaymentOffer | undefined;
   let refused: string | undefined;
+  // The paid leg settles on chain before the seller answers, so it gets a longer budget than an unpaid request.
+  const paidTimeoutMs = options.paidTimeoutMs ?? Math.max(timeoutMs * 4, 60_000);
+  const unpaidFetch = withTimeout(options.fetch ?? globalThis.fetch, timeoutMs);
+  const paidFetch = withTimeout(options.fetch ?? globalThis.fetch, paidTimeoutMs);
+  let paymentSent = false;
+  const timedFetch: typeof globalThis.fetch = (input, init) => {
+    // The same test radius-sdk's fetch uses to recognise a request that already carries a payment.
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    const carriesPayment = headers.has('payment-signature') || headers.has('x-payment') || /^payment\s/i.test(headers.get('authorization') ?? '');
+    if (carriesPayment) {
+      paymentSent = true;
+      return paidFetch(input, init);
+    }
+    return unpaidFetch(input, init);
+  };
   const payFetch = createRadiusFetch({
     networks: pay.networks,
     signer: pay.signer,
     maxPerRequest: { amount: maxUint256.toString() },
-    fetch: withTimeout(options.fetch ?? globalThis.fetch, timeoutMs),
+    fetch: timedFetch,
     onPaymentRequired: async (o) => {
       offer = o;
       const decision = decidePayment({ threshold: pay.threshold, yes: true }, BigInt(o.amount), o.network.asset.decimals, false);
@@ -497,9 +566,14 @@ async function payOnce(options: SellCheckOptions, method: string, add: (id: stri
   try {
     res = await payFetch(options.url, { method, headers: options.headers, body: hasBody ? (options.body as BodyInit) : undefined });
   } catch (e) {
+    // After the payment header went out, anything but a clean rejection leaves the outcome unknown.
+    const rejected = e instanceof RadiusPaymentError && (e.code === 'declined' || e.code === 'payment_rejected');
+    const maybeSettled = paymentSent && !refused && !rejected
+      ? `; the payment was sent and may have settled (no transaction hash was received): check the buyer wallet and the seller's facilitator before paying again${offer ? ` (offer: ${offer.amountFormatted} to ${offer.payTo} on ${offer.network.name})` : ''}`
+      : '';
     if (refused) add('pay', 'fail', `not paid: ${refused}`);
-    else if (e instanceof RadiusPaymentError) add('pay', 'fail', `payment failed: ${e.code}: ${e.message}`);
-    else add('pay', 'fail', `payment failed: ${(e as Error).message}`);
+    else if (e instanceof RadiusPaymentError) add('pay', 'fail', `payment failed: ${e.code}: ${e.message}${maybeSettled}`);
+    else add('pay', 'fail', `payment failed: ${(e as Error).message}${maybeSettled}`);
     return;
   }
   await res.arrayBuffer().catch(() => undefined);

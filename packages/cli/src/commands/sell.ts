@@ -2,6 +2,7 @@ import type { Command } from 'commander';
 import { resolveConfig, resolvePayNetworks, PAY_NETWORKS } from '../lib/config.js';
 import { jsonStringify } from '../lib/format.js';
 import { isSupportedVerb, looksLikeJson, parseHeaderArgs, readBodyArg, SUPPORTED_VERBS } from '../lib/http.js';
+import { parseUnits } from 'viem';
 import { resolvePrice } from 'radius-sdk';
 import type { Check, CheckStatus, SellCheckOptions, SellCheckReport } from '../lib/sellCheck.js';
 import type { GlobalOptions } from '../types.js';
@@ -68,6 +69,14 @@ async function runCheck(url: string, sub: CheckOptions, opts: GlobalOptions): Pr
   if (!isSupportedVerb(verb)) return usage(`unsupported method '${sub.method}' (use one of ${SUPPORTED_VERBS.join(', ')})`);
   if (sub.threshold !== undefined && !sub.pay) return usage('--threshold only applies with --pay');
   if (sub.pay && sub.threshold === undefined) return usage('--pay needs --threshold <decimal>, the most to pay');
+  if (sub.threshold !== undefined) {
+    try {
+      if (!/^\d+(\.\d+)?$/.test(sub.threshold)) throw new Error('not a decimal');
+      parseUnits(sub.threshold, 18);
+    } catch {
+      return usage(`--threshold must be a decimal number such as 0.01 (got '${sub.threshold}')`);
+    }
+  }
   if (sub.price !== undefined) {
     try {
       resolvePrice(sub.price, { address: '0x0000000000000000000000000000000000000000', decimals: 18 });
@@ -78,17 +87,31 @@ async function runCheck(url: string, sub: CheckOptions, opts: GlobalOptions): Pr
   const timeoutMs = Number(sub.timeout);
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) return usage(`--timeout must be a positive integer (got ${sub.timeout})`);
 
-  const headers = parseHeaderArgs(sub.header);
-  const body = readBodyArg(sub.data);
+  // Bad flag values are usage errors (exit 2), not runtime failures.
+  let headers: Headers;
+  let body: Uint8Array | undefined;
+  try {
+    headers = parseHeaderArgs(sub.header);
+    body = readBodyArg(sub.data);
+  } catch (e) {
+    return usage((e as Error).message);
+  }
   if (body && !headers.has('content-type') && looksLikeJson(body)) headers.set('content-type', 'application/json');
 
   // Network flags only matter for --pay, and for the SBC address on Radius. Paying defaults to
   // testnet whatever RADIUS_NETWORK or the config file say: mainnet needs an explicit --network mainnet.
-  const cfg = resolveConfig({ ...opts, network: opts.network ?? (sub.pay ? 'testnet' : undefined) });
+  let cfg: ReturnType<typeof resolveConfig>;
+  let payNetworks: ReturnType<typeof resolvePayNetworks> | undefined;
+  try {
+    cfg = resolveConfig({ ...opts, network: opts.network ?? (sub.pay ? 'testnet' : undefined) });
+    if (sub.pay) payNetworks = resolvePayNetworks(cfg, sub.networks);
+  } catch (e) {
+    return usage((e as Error).message);
+  }
   let pay: SellCheckOptions['pay'];
-  if (sub.pay) {
+  if (payNetworks) {
     const { deferredAccount } = await import('../lib/account.js');
-    pay = { networks: resolvePayNetworks(cfg, sub.networks), signer: await deferredAccount(cfg, opts.privateKey), threshold: sub.threshold! };
+    pay = { networks: payNetworks, signer: await deferredAccount(cfg, opts.privateKey), threshold: sub.threshold! };
   }
 
   // Loaded on demand: the facilitator client and x402 decoder are only needed here.
