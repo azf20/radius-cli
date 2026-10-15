@@ -7,7 +7,7 @@ import { NATIVE_TOKEN, STABLECOIN } from '../../../constants';
 
 # JSON-RPC API [Method behavior and compatibility]
 
-Radius exposes a JSON-RPC 2.0 API compatible with standard Ethereum tooling. This page documents methods that differ from Ethereum, methods requiring elevated access, pseudo-supported methods, and unsupported methods.
+Radius exposes a JSON-RPC 2.0 API compatible with standard Ethereum tooling. This page documents methods that differ from Ethereum, pseudo-supported methods, and unsupported methods.
 
 For integration guidance, see [JSON-RPC overview](/reference/json-rpc).
 
@@ -91,7 +91,7 @@ Two constraints differ from Ethereum:
 
 **Block range limit.** The maximum range between `fromBlock` and `toBlock` is 1,000,000 units. Because Radius block numbers are millisecond timestamps (see [`eth_blockNumber`](#eth_blocknumber)), this covers ~16 minutes 40 seconds of wall time. Queries exceeding this return error `-33002`.
 
-To query logs over a longer period, split the range into consecutive chunks of up to 1,000,000 and concatenate the results. For real-time event monitoring, use [WebSocket `eth_subscribe("logs")`](#eth_subscribe) instead.
+To query logs over a longer period, split the range into consecutive chunks of up to 1,000,000 and concatenate the results.
 
 ## Extended methods
 
@@ -171,23 +171,6 @@ On error code `4`, the `data` field contains the transaction hash. The transacti
   }
 }
 ```
-
-## Methods requiring elevated RPC access
-
-### `eth_subscribe`
-
-Creates a WebSocket subscription for real-time logs. Radius supports `logs` only.
-
-`newHeads` and `newPendingTransactions` are not available.
-
-**Parameters:**
-
-| Name     | Type     | Description                             |
-| -------- | -------- | --------------------------------------- |
-| `type`   | `string` | Subscription type (for example, `logs`) |
-| `filter` | `object` | Log filter object                       |
-
-**Returns:** `string` — Subscription ID.
 
 ## Pseudo-supported methods
 
@@ -295,6 +278,7 @@ Radius returns errors for these methods:
 - `eth_sign`
 - `eth_simulateV1`
 - `eth_submitWork`
+- `eth_subscribe`
 - `trace_block`
 - `trace_callMany`
 - `trace_filter`

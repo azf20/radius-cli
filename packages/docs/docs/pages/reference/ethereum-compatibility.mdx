@@ -23,7 +23,7 @@ Radius is broadly EVM compatible. It supports Solidity contracts, wallets, and f
 | `eth_getLogs` filtering    | Address filter optional                                        | Address filter required                                                                                                         |
 | Block tag on state queries | Reads historical state at specified block                      | Accepts `latest`, `pending`, `safe`, `finalized`; returns error `-32000` for historical block numbers (no archive state)        |
 | `eth_getBalance` semantics | Raw native balance                                             | Native + full ERC-20 token holdings as native currency (uncapped; may exceed per-transaction spend limit)                       |
-| `eth_subscribe` types      | `logs`, `newHeads`, `newPendingTransactions`                   | `logs` only                                                                                                                     |
+| `eth_subscribe` types      | `logs`, `newHeads`, `newPendingTransactions`                   | Not supported                                                                                                                   |
 | Poll-based filters         | `eth_newFilter` / `eth_getFilterChanges`                       | Not supported                                                                                                                   |
 | Replace-by-fee (RBF)       | Resubmit at a pending nonce with higher gas to cancel/replace  | Nonce whose tx already executed: rejected (`-33009`); a still-queued future nonce is replaceable with higher gas                |
 | Returned transaction hash  | Acknowledges the tx was accepted; not a guarantee it will mine | Means "queued" for a future-nonce tx — waits for the nonce gap to fill (evicted after ~30s if it doesn't); poll for the receipt |
@@ -372,32 +372,11 @@ Practical implications:
 
 Read account and storage values directly with `eth_getBalance`, `eth_getCode`, and `eth_getStorageAt`.
 
-### WebSocket subscriptions support `logs` only
+### `eth_subscribe` is not supported
 
-`eth_subscribe("logs")` works correctly with live notifications and fully populated log fields.
+`eth_subscribe` is not supported for any subscription type, including `logs`, `newHeads`, `newPendingTransactions`, and `syncing`.
 
-```typescript
-import { createPublicClient, webSocket } from 'viem';
-import { radiusTestnet } from './chain';
-
-const client = createPublicClient({
-  chain: radiusTestnet,
-  transport: webSocket('wss://rpc.testnet.radiustech.xyz'),
-});
-
-const unwatch = client.watchContractEvent({
-  address: contractAddress,
-  abi: contractAbi,
-  eventName: 'Transfer',
-  onLogs: (logs) => {
-    // process logs
-  },
-});
-```
-
-`eth_subscribe("newHeads")`, `eth_subscribe("newPendingTransactions")`, and `eth_subscribe("syncing")` return error `-32602`.
-
-For block tracking, poll `eth_blockNumber` on a 10–30 second interval.
+For event monitoring, poll `eth_getLogs` (see below). For block tracking, poll `eth_blockNumber` on a 10–30 second interval.
 
 ### Poll-based filters are not supported
 
@@ -421,8 +400,6 @@ setInterval(async () => {
   // process logs
 }, 15_000); // 15-second interval
 ```
-
-For real-time events, use WebSocket `eth_subscribe("logs")`.
 
 ## Beneficiaries and `COINBASE (0x41)`
 
@@ -466,8 +443,8 @@ Before shipping to production, verify:
 6. Indexers and analytics do not treat `transactionIndex` as authoritative ordering, and key on `transactionHash` — not `(blockNumber, transactionIndex)`, which is not unique on Radius. Indexers also re-scan `eth_getLogs` rather than assume a log is queryable the instant its receipt exists.
 7. Log queries always include an `address` filter.
 8. No logic queries state at a historical block number — Radius returns error `-32000` for historical state requests. Supported tags: `latest`, `pending`, `safe`, `finalized`.
-9. Event listeners use `eth_getLogs` polling or WebSocket `eth_subscribe("logs")` — not `eth_newFilter`.
-10. Block tracking uses `eth_blockNumber` polling — not `eth_subscribe("newHeads")`.
+9. Event listeners use `eth_getLogs` polling — not `eth_newFilter` or `eth_subscribe`.
+10. Block tracking uses `eth_blockNumber` polling — not `eth_subscribe`.
 11. Balance checks use the appropriate method (`eth_getBalance` for spendability, `rad_getBalanceRaw` for actual native balance, `balanceOf` for stablecoin balance).
 12. Transaction confirmation logic does not wait for multiple blocks. Execution is final.
 13. No integration depends on `eth_getProof` (state proofs) or `eth_getBlockReceipts`; both return error `-33000`. Use direct state reads and `eth_getTransactionReceipt` / `eth_getLogs` instead.

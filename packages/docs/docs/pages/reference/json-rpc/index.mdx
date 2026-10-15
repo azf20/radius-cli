@@ -50,14 +50,9 @@ An optional second parameter sets the maximum wait time in milliseconds. If omit
 
 See [`eth_sendRawTransactionSync`](/reference/json-rpc/methods#eth_sendrawtransactionsync) in the method reference for full parameter and error code details.
 
-## Use WebSocket subscriptions with the right access
+## WebSocket subscriptions are not supported
 
-`eth_subscribe` is supported for **logs only** and requires an RPC key with elevated privileges.
-
-- Supported: `logs`
-- Not supported: `newHeads`, `newPendingTransactions`, `syncing`
-
-For access and limits, see [Network and RPC](/reference/network).
+`eth_subscribe` is not supported for any subscription type, including `logs`. Poll `eth_getLogs` for events and `eth_blockNumber` for new blocks instead. See [Unsupported methods](/reference/json-rpc/methods#unsupported-methods).
 
 ## Find the complete method reference
 
