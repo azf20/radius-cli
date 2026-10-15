@@ -42,6 +42,7 @@ radius-cli wallet import 0xPRIVATE_KEY
 radius-cli wallet address
 radius-cli wallet balance [0xAddr]
 radius-cli wallet export                           # decrypts and prints the private key
+radius-cli --network testnet wallet faucet         # request a faucet drip (testnet ~0.5 SBC; mainnet ~0.01 SBC/day)
 radius-cli wallet sign "hello"                     # EIP-191 personal_sign — prints 0x signature
 radius-cli wallet sign --raw 0xdeadbeef            # sign raw hex bytes
 echo -n "msg" | radius-cli wallet sign -           # read message from stdin
@@ -166,6 +167,7 @@ Per-command JSON shapes:
 | `wallet address` | `{address}` |
 | `wallet export` | `{address, privateKey}` |
 | `wallet sign` | `{address, signature}` |
+| `wallet faucet` | `{address, network, amount, txHash, explorerUrl}` |
 | `wallet verify` | `{address, valid}` (exit 1 when invalid) |
 | `wallet balance` | `{address, totalUsd, sbc, rusd, sbcWei, rusdWei, aggregateWei, rusdSource, sbcError}` |
 | `wallet send` | `{hash, receipt?}` (no `receipt` with `--no-wait`) |
