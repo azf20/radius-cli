@@ -47,6 +47,30 @@ describe('proxyTo', () => {
     expect(((await res.json()) as Echo).url).toBe('/gz');
   });
 
+  it('drops Content-Encoding and Content-Length when the origin compresses anyway and fetch decoded the body', async () => {
+    const res = await proxyTo(origin.url)(new Request('http://seller.test/gz-always'));
+    expect(res.headers.get('content-encoding')).toBeNull();
+    expect(res.headers.get('content-length')).toBeNull();
+    expect(((await res.json()) as Echo).url).toBe('/gz-always');
+  });
+
+  it('ignores empty and malformed Connection entries', async () => {
+    const forward = proxyTo(origin.url);
+    const sent = new Request('http://seller.test/c', { headers: { connection: 'keep-alive, , x-drop,', 'x-drop': '1', 'x-keep': '1' } });
+    const echo = (await (await forward(sent)).json()) as Echo;
+    expect(echo.headers).toMatchObject({ 'x-keep': '1' });
+    expect(echo.headers).not.toHaveProperty('x-drop');
+  });
+
+  it('aborts the origin request when the client goes away', async () => {
+    const controller = new AbortController();
+    const pending = proxyTo(origin.url)(new Request('http://seller.test/slow', { signal: controller.signal }));
+    await new Promise((done) => setTimeout(done, 100));         // the request reaches the origin
+    controller.abort();
+    await expect(pending).rejects.toThrow(/abort/i);
+    await vi.waitFor(() => expect(origin.closed).toContain('/slow'), { timeout: 2000 });
+  });
+
   it('returns redirects instead of following them, with mutable headers', async () => {
     const res = await proxyTo(origin.url)(new Request('http://seller.test/redirect'));
     expect(res.status).toBe(302);

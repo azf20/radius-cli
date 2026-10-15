@@ -92,7 +92,7 @@ const pay = radiusPayments({ network: 'testnet', payTo: '0xYourWalletAddress', r
 export default { fetch: pay.wrap(proxyTo('http://127.0.0.1:8000')) };
 ```
 
-With Hono, register `app.all('/*', (c) => toOrigin(c.req.raw))` after the middleware, where `toOrigin = proxyTo(origin)`. The request goes out without `Host`, hop-by-hop headers, and payment credentials (`PAYMENT-SIGNATURE`, `X-PAYMENT`, `Authorization: Payment`); other `Authorization` schemes pass through. A request body is buffered and the origin is asked for an uncompressed response (`Accept-Encoding: identity`). Redirects are returned, not followed.
+With Hono, register `app.all('/*', (c) => toOrigin(c.req.raw))` after the middleware, where `toOrigin = proxyTo(origin)`. The request goes out without `Host`, hop-by-hop headers, and payment credentials (`PAYMENT-SIGNATURE`, `X-PAYMENT`, `Authorization: Payment`); other `Authorization` schemes pass through. A request body is buffered, and the origin is asked for an uncompressed response (`Accept-Encoding: identity`); if it compresses anyway, the decoded body goes out without `Content-Encoding`. A client that disconnects aborts the origin request. Redirects are returned, not followed.
 
 ### Settlement and streaming
 

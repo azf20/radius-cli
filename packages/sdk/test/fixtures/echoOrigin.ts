@@ -1,4 +1,5 @@
-// A local origin for proxy tests: echoes what it received; `/gz` gzips when asked, `/redirect` answers 302.
+// A local origin for proxy tests: echoes what it received; `/gz` gzips when asked, `/gz-always` gzips
+// regardless, `/redirect` answers 302, `/slow` never answers.
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { gzipSync } from 'node:zlib';
@@ -7,25 +8,32 @@ import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from '@x402
 
 export interface Echo { method?: string; url?: string; headers: Record<string, string | string[] | undefined>; body: string }
 
-export async function startEchoOrigin(): Promise<{ url: string; close: () => Promise<void> }> {
+export async function startEchoOrigin(): Promise<{ url: string; closed: string[]; close: () => Promise<void> }> {
+  const closed: string[] = [];
   const server: Server = createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on('data', (c: Buffer) => chunks.push(c));
     req.on('end', () => {
+      if (req.url === '/slow') {                                 // never answers; `onClose` sees the client go away
+        res.on('close', () => closed.push(req.url!));
+        return;
+      }
       if (req.url === '/redirect') {
         res.writeHead(302, { location: '/elsewhere' }).end();
         return;
       }
       const echo = JSON.stringify({ method: req.method, url: req.url, headers: req.headers, body: Buffer.concat(chunks).toString() } satisfies Echo);
-      const gzip = req.url?.startsWith('/gz') && /gzip/.test(String(req.headers['accept-encoding'] ?? ''));
-      res.writeHead(200, { 'content-type': 'application/json', 'x-origin': '1', ...(gzip ? { 'content-encoding': 'gzip' } : {}) });
-      res.end(gzip ? gzipSync(echo) : echo);
+      const gzip = req.url === '/gz-always' || (req.url?.startsWith('/gz') && /gzip/.test(String(req.headers['accept-encoding'] ?? '')));
+      const out = gzip ? gzipSync(echo) : Buffer.from(echo);
+      res.writeHead(200, { 'content-type': 'application/json', 'content-length': out.length, 'x-origin': '1', ...(gzip ? { 'content-encoding': 'gzip' } : {}) });
+      res.end(out);
     });
   });
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
   return {
     url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
-    close: () => new Promise<void>((done) => server.close(() => done())),
+    closed,
+    close: () => new Promise<void>((done) => { server.closeAllConnections(); server.close(() => done()); }),
   };
 }
 

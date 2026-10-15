@@ -66,5 +66,8 @@ describe('proxyTo on @hono/node-server', () => {
     const res = await realFetch(`${seller.url}/gz`);           // undici asks for gzip by default
     expect(res.status).toBe(200);
     expect(((await res.json()) as Echo).url).toBe('/gz');
+    const always = await realFetch(`${seller.url}/gz-always`);   // ignores Accept-Encoding: identity
+    expect(always.headers.get('content-encoding')).toBeNull();
+    expect(((await always.json()) as Echo).url).toBe('/gz-always');
   });
 });

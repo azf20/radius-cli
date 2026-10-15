@@ -112,7 +112,8 @@ export default app;
 `radius-sdk/server` or `radius-sdk/hono`) forwards a request with its method, path and query.
 Use it as the paid handler (`pay.wrap(proxyTo(origin))`, or `app.all('/*', (c) => toOrigin(c.req.raw))`
 after the Hono middleware). It buffers the body, drops `Host`, hop-by-hop headers and payment
-credentials (`Authorization: Bearer …` passes through), asks for `Accept-Encoding: identity`,
+credentials (`Authorization: Bearer …` passes through), asks for `Accept-Encoding: identity`
+(and drops `Content-Encoding` from a body `fetch` decoded anyway), passes the request's `signal`,
 returns redirects unfollowed, and copies the response headers so the receipt can be added.
 
 **Express, Next.js, or any other framework with an upstream x402 adapter**: the SDK provides
