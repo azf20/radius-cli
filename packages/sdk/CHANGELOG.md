@@ -1,5 +1,16 @@
 # radius-sdk
 
+## 0.6.0
+
+### Minor Changes
+
+- 726a7a8: `proxyTo(origin)` (from `radius-sdk/server` and `radius-sdk/hono`) forwards a request to an origin you do not change, for a seller in front of it: `pay.wrap(proxyTo(origin))`, or `app.all('/*', (c) => toOrigin(c.req.raw))` after the Hono middleware. It keeps the method, path and query, buffers the body (a stream body needs `duplex` on Node), drops `Host`, hop-by-hop headers (Node's `fetch` throws on `Keep-Alive`, `Expect` and others) and payment credentials, asks for `Accept-Encoding: identity` and drops `Content-Encoding`/`Content-Length` when `fetch` decoded a compressed body anyway, passes the request's `signal` so a disconnect aborts the origin request, returns redirects unfollowed, and copies the response headers so the receipt can be added.
+
+### Patch Changes
+
+- 8175dda: Package metadata points at the renamed repository, github.com/radiustechsystems/tools.
+- 67ea7ce: A paid route whose handler returns a `fetch()` response no longer fails after settlement under `@hono/node-server`. The server's global `Response` kept the origin's immutable headers, so adding the receipt threw `TypeError: immutable`: with `settle: 'before'` the payer was charged and got a 500, and with `'after'` a 402. The SDK now copies the headers before it adds the receipt.
+
 ## 0.5.0
 
 ### Minor Changes

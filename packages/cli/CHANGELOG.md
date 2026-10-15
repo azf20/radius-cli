@@ -1,5 +1,22 @@
 # radius-cli
 
+## 0.5.0
+
+### Minor Changes
+
+- cc68f37: Add `network`: print the resolved network config (chain id, RPC, explorer, faucet, facilitator, SBC) as text or `--json`, without touching the network.
+- 98450dd: Add `wallet sign-typed-data` (EIP-712) and `wallet sign-jwt` (ES256K), so agents can sign with the local account without exporting the private key.
+- ef5d91d: Add `wallet faucet`: request a faucet drip for the local account (testnet ~0.5 SBC, mainnet ~0.01 SBC/day), with `--json` output.
+- 3fb56ac: `sell check <url>` checks a seller's `402` without paying: it decodes the x402 `PAYMENT-REQUIRED` offers and any MPP `WWW-Authenticate: Payment` challenge, checks each offer's network, asset and EIP-712 domain, amount (against `--price`, at the asset's decimals), `payTo`, `resource.url` and `maxTimeoutSeconds`, reads the facilitator's `/supported` (`--facilitator`, default the network's) for each offer's scheme, network and transfer method, and asks the SDK buyer whether it would pay. `--probe-head` warns when an unpaid `HEAD` is served, and `--pay --threshold` makes one paid request (testnet unless `--network mainnet`) and checks the receipt. Like the SDK buyer it also reads an x402 challenge from the JSON body, and a malformed offer is a failed check, not a crash. Prints a checklist or, with `--json`, a report; exits 1 when a check fails and 2 on invalid flags.
+
+### Patch Changes
+
+- 8175dda: Package metadata points at the renamed repository, github.com/radiustechsystems/tools.
+- Updated dependencies [8175dda]
+- Updated dependencies [67ea7ce]
+- Updated dependencies [726a7a8]
+  - radius-sdk@0.6.0
+
 ## 0.4.0
 
 ### Minor Changes
