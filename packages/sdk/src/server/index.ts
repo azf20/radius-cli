@@ -24,6 +24,7 @@ export { RadiusFacilitatorClient, staticSupported, withUnknownOutcomes, type Fac
 export { RadiusExactScheme, type GasSponsoringMode, type SettleMode } from './scheme.js';
 export { RequestAdapter, requestContext, requestOf } from './adapter.js';
 export { MppPayments, type MppServerOptions } from './mpp.js';
+export { proxyTo } from './proxy.js';
 export type { HTTPRequestContext, RoutesConfig, FacilitatorClient } from '@x402/core/server';
 
 /** Recipient address, or a function of the request. */

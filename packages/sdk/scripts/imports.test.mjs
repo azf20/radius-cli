@@ -56,7 +56,10 @@ test('root and Hono seller work with buyer dependency imports blocked', () => {
 test('web-standard server handler works with buyer dependency imports blocked', () => {
   run(`
     import assert from 'node:assert/strict';
-    import { radiusPayments, createRadiusServer } from 'radius-sdk/server';
+    import { radiusPayments, createRadiusServer, proxyTo } from 'radius-sdk/server';
+    import { proxyTo as honoProxyTo } from 'radius-sdk/hono';
+    assert.equal(typeof proxyTo('http://origin.test'), 'function');
+    assert.equal(honoProxyTo, proxyTo);
 
     const pay = radiusPayments({
       network: 'testnet',
