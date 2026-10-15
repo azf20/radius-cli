@@ -293,12 +293,18 @@ app.all('/*', async (c) => {                                    // paid (after s
   const drop = ['host', 'content-length', 'expect', 'connection', 'keep-alive', 'te', 'trailer', 'transfer-encoding', 'upgrade',
     ...(req.headers.get('connection') ?? '').split(',').map((h) => h.trim().toLowerCase())];   // Node's fetch throws on several
   const headers = new Headers([...req.headers].filter(([k]) => !drop.includes(k) && !k.startsWith('proxy-')));
-  headers.set('accept-encoding', 'identity');                  // Node's fetch decodes gzip but keeps Content-Encoding
+  headers.set('accept-encoding', 'identity');                  // ask for an uncompressed body
   headers.delete('payment-signature');                         // as in the Worker's toOrigin above
   if (/^payment\s/i.test(headers.get('authorization') ?? '')) headers.delete('authorization');
   const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await req.arrayBuffer();   // gotchas item 17
-  const res = await fetch(process.env.ORIGIN_URL + url.pathname + url.search, { method: req.method, headers, body, redirect: 'manual' });
-  return new Response(res.body, { status: res.status, headers: new Headers(res.headers) });   // radius-sdk 0.5.0: gotchas item 17
+  const res = await fetch(process.env.ORIGIN_URL + url.pathname + url.search, { method: req.method, headers, body, redirect: 'manual', signal: req.signal });
+  const out = new Headers(res.headers);                        // mutable copy: gotchas item 17
+  const codings = (res.headers.get('content-encoding') ?? '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
+  if (res.body && codings.length && codings.every((e) => ['gzip', 'x-gzip', 'deflate', 'br'].includes(e))) {
+    out.delete('content-encoding');                            // compressed anyway: fetch decoded the body but kept these
+    out.delete('content-length');
+  }
+  return new Response(res.body, { status: res.status, headers: out });
 });
 ```
 
