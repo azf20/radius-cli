@@ -8,6 +8,8 @@ import { keystoreExists, loadKeystorePrivateKey, saveKeystore } from '../lib/key
 import { getOwnAddress, requireAccount } from '../lib/account.js';
 import { makePublicClient, makeWalletClient } from '../lib/client.js';
 import { parseAmountArg, parseTokenArg, readBalances } from '../lib/erc20.js';
+import { signJwt } from '../lib/jwt.js';
+import { parseTypedData } from '../lib/typedData.js';
 import { coerceArg, parseCastSignature } from '../lib/signature.js';
 import { formatUsd, formatUsdShort, jsonStringify } from '../lib/format.js';
 import { registerWalletPay } from './walletPay.js';
@@ -158,6 +160,47 @@ export function registerWallet(program: Command): void {
         return;
       }
       console.log(signature);
+    });
+
+  wallet
+    .command('sign-typed-data')
+    .description('Sign EIP-712 typed data with the local account')
+    .argument('<json>', "typed data as JSON ({domain, types, primaryType, message}) — pass '-' to read from stdin")
+    .action(async (jsonArg: string, _subOpts, cmd) => {
+      const opts = cmd.optsWithGlobals() as GlobalOptions;
+      const cfg = resolveConfig(opts);
+      const typedData = parseTypedData(jsonArg === '-' ? readFileSync(0, 'utf8') : jsonArg);
+      const account = await requireAccount(cfg, opts.privateKey);
+      const signature = await account.signTypedData(typedData);
+      if (opts.json) {
+        console.log(jsonStringify({ address: account.address, signature }));
+        return;
+      }
+      console.log(signature);
+    });
+
+  wallet
+    .command('sign-jwt')
+    .description('Sign a JWT (ES256K) with the local account; iss defaults to the account address')
+    .option('--claims <json>', 'extra claims as a JSON object', '{}')
+    .option('--expires-in <seconds>', 'token lifetime in seconds', '3600')
+    .action(async (subOpts: { claims: string; expiresIn: string }, cmd) => {
+      const opts = cmd.optsWithGlobals() as GlobalOptions;
+      const cfg = resolveConfig(opts);
+      let claims: unknown;
+      try {
+        claims = JSON.parse(subOpts.claims);
+      } catch {
+        throw new Error('--claims must be valid JSON');
+      }
+      if (typeof claims !== 'object' || claims === null || Array.isArray(claims)) throw new Error('--claims must be a JSON object');
+      const account = await requireAccount(cfg, opts.privateKey);
+      const token = await signJwt(account, { claims: claims as Record<string, unknown>, expiresIn: Number(subOpts.expiresIn) });
+      if (opts.json) {
+        console.log(jsonStringify({ address: account.address, token }));
+        return;
+      }
+      console.log(token);
     });
 
   wallet

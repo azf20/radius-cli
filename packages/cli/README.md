@@ -45,6 +45,8 @@ radius-cli wallet export                           # decrypts and prints the pri
 radius-cli wallet sign "hello"                     # EIP-191 personal_sign — prints 0x signature
 radius-cli wallet sign --raw 0xdeadbeef            # sign raw hex bytes
 echo -n "msg" | radius-cli wallet sign -           # read message from stdin
+radius-cli wallet sign-typed-data '{"domain":…,"types":…,"primaryType":…,"message":…}'   # EIP-712 — prints 0x signature (or '-' for stdin)
+radius-cli wallet sign-jwt --claims '{"aud":"my-service"}' --expires-in 600       # ES256K JWT; iss defaults to the address
 radius-cli wallet verify "hello" 0xSig             # verify against own address
 radius-cli wallet verify "hello" 0xSig --address 0xOther
 radius-cli wallet send 0xTo 0.10 RUSD              # native value transfer
@@ -165,7 +167,8 @@ Per-command JSON shapes:
 | `wallet new` / `wallet import` | `{path, address}` |
 | `wallet address` | `{address}` |
 | `wallet export` | `{address, privateKey}` |
-| `wallet sign` | `{address, signature}` |
+| `wallet sign` / `wallet sign-typed-data` | `{address, signature}` |
+| `wallet sign-jwt` | `{address, token}` |
 | `wallet verify` | `{address, valid}` (exit 1 when invalid) |
 | `wallet balance` | `{address, totalUsd, sbc, rusd, sbcWei, rusdWei, aggregateWei, rusdSource, sbcError}` |
 | `wallet send` | `{hash, receipt?}` (no `receipt` with `--no-wait`) |
