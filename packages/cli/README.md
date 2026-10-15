@@ -42,6 +42,7 @@ radius-cli wallet import 0xPRIVATE_KEY
 radius-cli wallet address
 radius-cli wallet balance [0xAddr]
 radius-cli wallet export                           # decrypts and prints the private key
+radius-cli --network testnet wallet faucet         # request a faucet drip (testnet ~0.5 SBC; mainnet ~0.01 SBC/day)
 radius-cli wallet sign "hello"                     # EIP-191 personal_sign — prints 0x signature
 radius-cli wallet sign --raw 0xdeadbeef            # sign raw hex bytes
 echo -n "msg" | radius-cli wallet sign -           # read message from stdin
@@ -120,6 +121,7 @@ radius-cli receipt 0xTransactionHash
 radius-cli storage 0xContract 0
 radius-cli code 0xContract
 radius-cli nonce 0xAddress
+radius-cli --network testnet network              # chain id, RPC, explorer, faucet, facilitator, SBC (offline)
 ```
 
 Function signatures use `cast` syntax: `name(args)` for state-changing calls, `name(args)(returns)` for read calls (the result is decoded against the return types).
@@ -167,8 +169,9 @@ Per-command JSON shapes:
 | `wallet new` / `wallet import` | `{path, address}` |
 | `wallet address` | `{address}` |
 | `wallet export` | `{address, privateKey}` |
-| `wallet sign` / `wallet sign-typed-data` | `{address, signature}` |
 | `wallet sign-jwt` | `{address, token}` |
+| `wallet sign` | `{address, signature}` |
+| `wallet faucet` | `{address, network, amount, txHash, explorerUrl}` |
 | `wallet verify` | `{address, valid}` (exit 1 when invalid) |
 | `wallet balance` | `{address, totalUsd, sbc, rusd, sbcWei, rusdWei, aggregateWei, rusdSource, sbcError}` |
 | `wallet send` | `{hash, receipt?}` (no `receipt` with `--no-wait`) |
@@ -179,6 +182,7 @@ Per-command JSON shapes:
 | `receipt` | the full receipt object |
 | `code` | `{address, code}` |
 | `nonce` | `{address, nonce}` |
+| `network` | `{name, chainId, caip2, testnet, rpcUrl, explorerUrl, faucetUrl, facilitatorUrl, nativeCurrency, asset}` |
 | `storage` | `{address, slot, value}` |
 
 Errors continue to go to stderr as `error: <message>` with a non-zero exit code; only successful output is JSON-shaped.

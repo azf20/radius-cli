@@ -3,7 +3,7 @@ import { confirm, password as promptPassword } from '@inquirer/prompts';
 import { readFileSync } from 'node:fs';
 import { encodeFunctionData, isAddress, parseEther, verifyMessage, type Address, type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { resolveConfig, readPasswordless, writeCachedAddress, writePasswordless } from '../lib/config.js';
+import { radiusNetwork, resolveConfig, readPasswordless, writeCachedAddress, writePasswordless } from '../lib/config.js';
 import { keystoreExists, loadKeystorePrivateKey, saveKeystore } from '../lib/keystore.js';
 import { getOwnAddress, requireAccount } from '../lib/account.js';
 import { makePublicClient, makeWalletClient } from '../lib/client.js';
@@ -14,7 +14,8 @@ import { coerceArg, parseCastSignature } from '../lib/signature.js';
 import { formatUsd, formatUsdShort, jsonStringify } from '../lib/format.js';
 import { registerWalletPay } from './walletPay.js';
 import type { GlobalOptions } from '../types.js';
-import type { TokenInput } from 'radius-sdk/client';
+import { explorerTxUrl } from 'radius-sdk';
+import { createRadiusFetch, type TokenInput } from 'radius-sdk/client';
 
 function readMessageArg(arg: string, raw: boolean): string | { raw: Hex } {
   const text = arg === '-' ? readFileSync(0, 'utf8') : arg;
@@ -142,6 +143,25 @@ export function registerWallet(program: Command): void {
       }
       console.log(`Address: ${address}`);
       console.log(`PrivateKey: ${pk}`);
+    });
+
+  wallet
+    .command('faucet')
+    .description('Request a faucet drip for the local account (testnet ~0.5 SBC; mainnet ~0.01 SBC/day)')
+    .action(async (_subOpts, cmd) => {
+      const opts = cmd.optsWithGlobals() as GlobalOptions;
+      const cfg = resolveConfig(opts);
+      const network = radiusNetwork(cfg);
+      const account = await requireAccount(cfg, opts.privateKey);
+      const { amount, txHash } = await createRadiusFetch({ networks: [network], signer: account, maxPerRequest: '0' }).fund();
+      const explorerUrl = txHash ? explorerTxUrl(network, txHash) : undefined;
+      if (opts.json) {
+        console.log(jsonStringify({ address: account.address, network: network.name, amount, txHash, explorerUrl }));
+        return;
+      }
+      console.log(`Dripped ${amount ?? '?'} ${network.asset.symbol} to ${account.address} on ${network.name}`);
+      if (txHash) console.log(`Tx: ${txHash}`);
+      if (explorerUrl) console.log(explorerUrl);
     });
 
   wallet
