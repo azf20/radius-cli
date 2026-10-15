@@ -1,6 +1,6 @@
 ---
 name: sell-api
-description: Monetize an API or web content on Radius with radius-sdk. Use when the user wants to charge for HTTP endpoints, articles or pages, add per-request payments or a paywall, gate routes behind HTTP 402, charge AI crawlers and agents while readers stay free (publisher, CMS site, pay-per-crawl), accept x402 or MPP payments, or sell access in a TypeScript app on Hono, Express, Next.js (middleware, proxy or route handlers), Astro (middleware), a Cloudflare Worker or Fastly Compute service in front of an origin, Bun, Deno or Node. Covers framework detection, install, configuration (network, price, recipient, facilitator, settlement order, MPP), who pays and who reads free, CDN caching, local runs, verification with radius-cli sell check, known SDK gotchas, and the hand-off to a deployment skill.
+description: Monetize an API or web content on Radius with radius-sdk. Use when the user wants to charge for HTTP endpoints, articles or pages, add per-request payments or a paywall, gate routes behind HTTP 402, charge AI crawlers and agents while readers stay free (publisher, CMS site, pay-per-crawl), accept x402 or MPP payments, or sell access in a TypeScript app on Hono, Express, Next.js (middleware, proxy or route handlers), Astro (middleware), a Cloudflare Worker, Fastly Compute service or Hono proxy on Node in front of an origin, Bun, Deno or Node. Covers framework detection, install, configuration (network, price, recipient, facilitator, settlement order, MPP), who pays and who reads free, CDN caching, local runs, verification with radius-cli sell check, known SDK gotchas, and the hand-off to a deployment skill.
 published: true
 user-invocable: true
 ---
@@ -41,6 +41,7 @@ Read `package.json` (and the entry file) and pick the wrapper. Details and full 
 | Next.js pages or articles (`middleware.ts` on Next 15, `proxy.ts` on Next 16; edge or Node runtime) | `radiusPayments` in the middleware: `pay(publicRequest(req), () => NextResponse.next())` | `radius-sdk` | yes |
 | Astro with a server adapter (`astro.config.*` with `output: 'server'` or an adapter) | `radiusPayments` in `src/middleware.ts`, **with the prerender guard**. Prerendered pages are not gated | `radius-sdk` | yes |
 | A CMS or site you cannot change, behind Cloudflare (`wrangler.toml`) | A Worker in front of the origin: `pay(request, () => fetch(origin))` | `radius-sdk` | yes |
+| An origin you cannot change (any language), without Cloudflare | A Hono proxy on Node in front of it: gated routes, `app.all('/*')` passes the rest through | `radius-sdk hono @hono/node-server` | yes |
 | Fastly Compute (`fastly.toml`) | The same, with an `AbortSignal` shim (hand-tested only). Fastly VCL-only services cannot run it: gate in the origin framework | `radius-sdk` | yes |
 | Express | `createRadiusServer` from `radius-sdk/server` + `paymentMiddleware` from `@x402/express` | `radius-sdk @x402/express express` | no |
 | Next.js 16.2.6 or later, x402 only | `createRadiusServer` + `@x402/next` (**not covered by this repo's tests**; on Next 15 it cannot be used) | `radius-sdk @x402/next` | no |
@@ -74,6 +75,7 @@ app.use(radiusPayments({
 app.get('/api/report', (c) => c.json({ report: 'quarterly-sales', paidBy: c.get('radiusPayment')?.payer }));
 ```
 
+- Examples are TypeScript. In plain JavaScript drop the `type` imports, generics and `as` casts; the runtime API is the same. `RadiusPaymentVariables` is a type-only export that types `c.get('radiusPayment')`.
 - **Register the payment middleware before the paid handlers.** A handler registered first answers before the middleware runs and is served free (Express and Hono).
 - Route keys are `"METHOD /path"` with `*` and `:param`; the first matching key wins, so list specific routes before wildcards.
 - Dynamic `price` / `payTo` are functions of the request (`Request`, Hono context, or x402 context on Express).
@@ -90,6 +92,8 @@ curl -i http://127.0.0.1:3000/api/report      # expect 402, PAYMENT-REQUIRED, Ca
 curl -i http://127.0.0.1:3000/health          # free routes stay 200
 ```
 
+Check every route that must stay free the same way: discovery (`/.well-known/*`), auth (`/token`), health. None may answer 402; `sell check` audits paid routes only.
+
 ### 5. Verify with `radius-cli sell check`
 
 ```bash
@@ -104,6 +108,13 @@ It requests the route without paying, decodes the x402 challenge and any MPP cha
 To check a gate that charges only some clients, pass the header: `radius-cli sell check URL -H 'User-Agent: GPTBot/1.1'` should pass, and the same command with a browser User-Agent should fail (a human is served free). `sell check` does not look at CDN caching.
 
 For an end-to-end proof on testnet, a funded `radius-cli` wallet can pay once: `RADIUS_HOME=.radius radius-cli sell check URL --pay --threshold 0.01` (testnet unless `--network mainnet` is given). Only do this when the user asks for a real payment; never on mainnet without explicit instruction.
+
+**Minimum verify**, locally and again on the deployed URL:
+
+1. Each paid route, unpaid, answers `402` with a `PAYMENT-REQUIRED` header.
+2. The header decodes to an x402 v2 challenge with the expected network, asset, `payTo` and amount (`sell check URL --price ...` passes).
+3. Every free route answers without a 402 (step 4).
+4. When the user wants a real testnet payment: `radius-cli --network testnet wallet pay get URL --threshold 0.01 --include` answers 200 with a `PAYMENT-RESPONSE` receipt (or `sell check --pay` above).
 
 ### 6. Deploy (optional hand-off)
 
@@ -123,6 +134,7 @@ Current SDK behavior with mitigations, from the seller evaluation suite: [gotcha
 | `resource.url` says `localhost` behind a proxy (`next start`, Astro 5) | Rebuild the request from `x-forwarded-host` (Next), set `security.allowedDomains` (Astro 5). |
 | Origin sends `Surrogate-Control` / `CDN-Cache-Control` | They pass through on paid responses. Strip them in the Worker and gate before the cache. |
 | Fastly Compute: `AbortSignal is not defined` | Add the shim from frameworks.md. |
+| Node proxy forwards `req.body` to `fetch`, or returns the `fetch()` response | `duplex option is required` (Node 20, 22 and 24); on `@hono/node-server` a paid request is charged, then 500s. Buffer the body and copy the headers (gotchas item 17). |
 | Hono handler sets `Cache-Control` | It replaces the SDK's `private`. Set `private` yourself. |
 | `'after'` mode, failed settlement | Body withheld, handler headers leak (Hono, Express). Keep `'before'`. |
 | Wildcard route priced once | A payment for `/api/x` unlocks `/api/y` at the same price. Price routes by value. |
@@ -132,7 +144,7 @@ Current SDK behavior with mitigations, from the seller evaluation suite: [gotcha
 ## Progressive disclosure
 
 **Local references:**
-- Framework wrappers with full examples (Hono, web-standard, Express, Next.js middleware, Astro middleware, Worker and Fastly Compute in front of an origin): [frameworks.md](references/frameworks.md)
+- Framework wrappers with full examples (Hono, web-standard, Express, Next.js middleware, Astro middleware, Worker, Fastly Compute and a Hono proxy on Node in front of an origin): [frameworks.md](references/frameworks.md)
 - Publishers: charging agents but not humans, CDN caching, paywalls, discovery, missing pages: [publishers.md](references/publishers.md)
 - x402 v2 `exact` and MPP on the seller: [protocols.md](references/protocols.md)
 - Networks, facilitators, API keys, custom clients: [networks-facilitators.md](references/networks-facilitators.md)

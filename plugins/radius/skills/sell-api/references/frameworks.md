@@ -11,6 +11,7 @@ Every wrapper takes the same route table and options; only the glue differs. Pic
 | `radiusPayments()` in Astro `src/middleware.ts` (SSR) | `radius-sdk/server` | seller eval `SELL-ASTRO-MW` (Astro 4.15.12 and 5.18.1, Node adapter) | yes |
 | `radiusPayments()` in a Cloudflare Worker in front of an origin | `radius-sdk/server` | seller eval `SELL-WORKER-PROXY` (workerd through `wrangler dev`) | yes |
 | `radiusPayments()` in Fastly Compute | `radius-sdk/server` | **no**: run by hand on Viceroy, with a shim | yes |
+| `radiusPayments()` Hono proxy on Node in front of an origin | `radius-sdk/hono`, `@hono/node-server` | **no**: run by hand (Node 22, mock facilitator) | yes |
 | `createRadiusServer()` + `@x402/next` | `radius-sdk/server`, `@x402/next` | **no** | no |
 
 Publisher sites (articles, pages, a CMS in front) use the middleware and in-front-of-origin rows: see [publishers.md](publishers.md) for who pays and who reads free, CDN caching and paywalls.
@@ -278,6 +279,30 @@ export default {
 - **The origin's status is visible here.** The default `settle: 'before'` still charges for an origin 404. `settle: 'after'` charges only when the origin answers below 400; the eval confirms no charge on a 404 and a charge on a 200. Use a second `radiusPayments({ settle: 'after', ... })` for those routes if you want that. The trade-offs of `'after'` are in [settlement.md](settlement.md) and gotchas items 4 and 11.
 - **The origin's headers pass through to the payer**, including `Set-Cookie`, `Surrogate-Control`, `CDN-Cache-Control` and `Surrogate-Key`. See [publishers.md](publishers.md) for the caching consequences and the stripping wrapper the eval verifies.
 - Gate everything on the Worker route, or add a condition to charge only agents: [publishers.md](publishers.md).
+
+## In front of an origin: Hono on Node
+
+For an origin in any language (Python, Go, …) that you deploy next to, without Cloudflare. Paid routes are gated; every other path, including discovery and auth, passes through free. Run by hand (Node 22.22, `@hono/node-server` 2.1, mock facilitator): unpaid 402, paid `POST` 200 with the body forwarded, free routes untouched. Not in the eval.
+
+Build the app as in [Hono](#hono-radius-sdkhono) above (`app.use(radiusPayments({ network, payTo, routes }))`, `HEAD` priced next to each paid `GET`), serve it with `serve({ fetch: app.fetch })` from `@hono/node-server`, and register one pass-through after the middleware. Only the pass-through is Node-specific:
+
+```typescript
+app.all('/*', async (c) => {                                    // paid (after settlement) and free requests
+  const req = c.req.raw;
+  const url = new URL(req.url);
+  const drop = ['host', 'content-length', 'expect', 'connection', 'keep-alive', 'te', 'trailer', 'transfer-encoding', 'upgrade',
+    ...(req.headers.get('connection') ?? '').split(',').map((h) => h.trim().toLowerCase())];   // Node's fetch throws on several
+  const headers = new Headers([...req.headers].filter(([k]) => !drop.includes(k) && !k.startsWith('proxy-')));
+  headers.set('accept-encoding', 'identity');                  // Node's fetch decodes gzip but keeps Content-Encoding
+  headers.delete('payment-signature');                         // as in the Worker's toOrigin above
+  if (/^payment\s/i.test(headers.get('authorization') ?? '')) headers.delete('authorization');
+  const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await req.arrayBuffer();   // gotchas item 17
+  const res = await fetch(process.env.ORIGIN_URL + url.pathname + url.search, { method: req.method, headers, body, redirect: 'manual' });
+  return new Response(res.body, { status: res.status, headers: new Headers(res.headers) });   // radius-sdk 0.5.0: gotchas item 17
+});
+```
+
+A Dockerfile needs only `FROM node:22-slim`, `npm ci --omit=dev` and `CMD ["node", "server.ts"]`: Node 22.18 or later runs TypeScript directly (set `"type": "module"` in `package.json`).
 
 ## In front of an origin: Fastly Compute
 
