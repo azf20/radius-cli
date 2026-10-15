@@ -119,6 +119,7 @@ radius-cli receipt 0xTransactionHash
 radius-cli storage 0xContract 0
 radius-cli code 0xContract
 radius-cli nonce 0xAddress
+radius-cli --network testnet network              # chain id, RPC, explorer, faucet, facilitator, SBC (offline)
 ```
 
 Function signatures use `cast` syntax: `name(args)` for state-changing calls, `name(args)(returns)` for read calls (the result is decoded against the return types).
@@ -178,6 +179,7 @@ Per-command JSON shapes:
 | `receipt` | the full receipt object |
 | `code` | `{address, code}` |
 | `nonce` | `{address, nonce}` |
+| `network` | `{name, chainId, caip2, testnet, rpcUrl, explorerUrl, faucetUrl, facilitatorUrl, nativeCurrency, asset}` |
 | `storage` | `{address, slot, value}` |
 
 Errors continue to go to stderr as `error: <message>` with a non-zero exit code; only successful output is JSON-shaped.
