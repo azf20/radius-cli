@@ -290,8 +290,9 @@ Build the app as in [Hono](#hono-radius-sdkhono) above (`app.use(radiusPayments(
 app.all('/*', async (c) => {                                    // paid (after settlement) and free requests
   const req = c.req.raw;
   const url = new URL(req.url);
-  const headers = new Headers(req.headers);
-  headers.delete('host');
+  const drop = ['host', 'content-length', 'expect', 'connection', 'keep-alive', 'te', 'trailer', 'transfer-encoding', 'upgrade',
+    ...(req.headers.get('connection') ?? '').split(',').map((h) => h.trim().toLowerCase())];   // Node's fetch throws on several
+  const headers = new Headers([...req.headers].filter(([k]) => !drop.includes(k) && !k.startsWith('proxy-')));
   headers.set('accept-encoding', 'identity');                  // Node's fetch decodes gzip but keeps Content-Encoding
   headers.delete('payment-signature');                         // as in the Worker's toOrigin above
   if (/^payment\s/i.test(headers.get('authorization') ?? '')) headers.delete('authorization');
