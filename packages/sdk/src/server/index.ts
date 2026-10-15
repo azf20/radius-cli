@@ -415,9 +415,12 @@ function setHeaders(res: Response, headers: Record<string, string> | undefined):
   if (headers) for (const [k, v] of Object.entries(headers)) res.headers.set(k, v);
 }
 
-/** A copy of `res` whose headers are mutable (responses from `fetch()` have immutable headers). */
+/**
+ * A copy of `res` whose headers are mutable (responses from `fetch()` have immutable headers). The
+ * Headers are copied explicitly: @hono/node-server's global `Response` keeps the object it is given.
+ */
 function mutable(res: Response, body: BodyInit | null = res.body): Response {
-  return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
+  return new Response(body, { status: res.status, statusText: res.statusText, headers: new Headers(res.headers) });
 }
 
 /** Web-standard handler for an already-built x402 `RoutesConfig` (see `RadiusServer.buildRoutes`). @internal */
