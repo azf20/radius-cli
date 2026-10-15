@@ -48,7 +48,7 @@ describe('proxyTo on @hono/node-server', () => {
     expect(token).toMatchObject({ method: 'POST', body: 'grant_type=x', headers: { authorization: 'Bearer t' } });
     const discovery = await realFetch(`${seller.url}/.well-known/x402`);
     expect(discovery.status).toBe(200);
-    // curl sends `Expect: 100-continue` for bodies over 1 KiB; Node's fetch throws if it is forwarded.
+    // Clients and proxies may send `Expect: 100-continue` on uploads; Node's fetch throws if it is forwarded.
     const body = 'x'.repeat(2048);
     const large = await new Promise<{ status?: number; echo: Echo }>((done, fail) => {
       const req = httpRequest(`${seller.url}/upload`, { method: 'POST', headers: { expect: '100-continue', 'content-length': body.length } }, (res) => {
