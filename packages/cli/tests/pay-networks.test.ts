@@ -62,3 +62,13 @@ describe('resolvePayNetworks', () => {
     expect(() => resolvePayNetworks(mainnet, ' , ')).toThrow(/at least one network/);
   });
 });
+
+describe('radiusNetwork', () => {
+  it('resolves the configured network with the rpc override applied', async () => {
+    const { radiusNetwork } = await import('../src/lib/config.js');
+    const net = radiusNetwork(resolveConfig({ network: 'testnet', rpcUrl: 'https://rpc.example/radius' }));
+    expect(net.name).toBe('radius-testnet');
+    expect(net.rpcUrl).toBe('https://rpc.example/radius');
+    expect(net.faucetUrl).toContain('testnet.radiustech.xyz');
+  });
+});

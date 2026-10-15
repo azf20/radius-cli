@@ -63,6 +63,11 @@ export function resolveConfig(opts: GlobalOptions): ResolvedConfig {
   return { network, chain, rpcUrl, sbcAddress, rusdAddress, keystorePath, password };
 }
 
+/** The configured Radius network (mainnet or testnet) with the `--rpc-url` / `--sbc` overrides applied. */
+export function radiusNetwork(cfg: ResolvedConfig): PaymentNetwork {
+  return resolveNetwork(cfg.network, { rpcUrl: cfg.rpcUrl, asset: cfg.sbcAddress ? { address: cfg.sbcAddress } : undefined });
+}
+
 /** Networks `wallet pay` can pay on. `--network` picks mainnet or testnet for all of them. */
 export const PAY_NETWORKS = ['radius', 'base'] as const;
 export type PayNetworkName = (typeof PAY_NETWORKS)[number];
@@ -79,9 +84,7 @@ export function resolvePayNetworks(cfg: ResolvedConfig, flag?: string): PaymentN
   const names = [...new Set(raw.split(',').map((n) => n.trim().toLowerCase()).filter(Boolean))];
   if (names.length === 0) throw new Error('--networks needs at least one network');
   return names.map((name) => {
-    if (name === 'radius') {
-      return resolveNetwork(cfg.network, { rpcUrl: cfg.rpcUrl, asset: cfg.sbcAddress ? { address: cfg.sbcAddress } : undefined });
-    }
+    if (name === 'radius') return radiusNetwork(cfg);
     if (name === 'base') {
       const testnet = cfg.network === 'testnet';
       const rpcUrl = testnet ? (process.env.RADIUS_BASE_SEPOLIA_RPC_URL ?? file.rpcUrls?.['base-sepolia']) : (process.env.RADIUS_BASE_RPC_URL ?? file.rpcUrls?.base);
