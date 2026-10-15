@@ -108,6 +108,13 @@ app.get('/api/lookup', (c) => c.json({ ok: true, paidBy: c.get('radiusPayment')?
 export default app;
 ```
 
+**In front of an origin you do not change** (any language): `proxyTo(origin)` (from
+`radius-sdk/server` or `radius-sdk/hono`) forwards a request with its method, path and query.
+Use it as the paid handler (`pay.wrap(proxyTo(origin))`, or `app.all('/*', (c) => toOrigin(c.req.raw))`
+after the Hono middleware). It buffers the body, drops `Host`, hop-by-hop headers and payment
+credentials (`Authorization: Bearer …` passes through), asks for `Accept-Encoding: identity`,
+returns redirects unfollowed, and copies the response headers so the receipt can be added.
+
 **Express, Next.js, or any other framework with an upstream x402 adapter**: the SDK provides
 the Radius resource server and routes, the adapter provides the middleware.
 

@@ -22,8 +22,8 @@ Requires Node.js 22 or later, or a runtime with `fetch` such as Cloudflare Worke
 | Entry point         | Exports                                                                                                      | Peer dependency   |
 | ------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------- |
 | `radius-sdk`        | Networks, `SBC`, `USDC_BASE`, price helpers, `getPaymentReceipt`, `RadiusPaymentError`, `radiusEnv`          | —                 |
-| `radius-sdk/server` | Web-standard `radiusPayments`, `createRadiusServer`, `RequestAdapter`, and server types                      | —                 |
-| `radius-sdk/hono`   | `radiusPayments` and its types                                                                               | `hono` `^4`       |
+| `radius-sdk/server` | Web-standard `radiusPayments`, `createRadiusServer`, `proxyTo`, `RequestAdapter`, and server types           | —                 |
+| `radius-sdk/hono`   | `radiusPayments`, `proxyTo`, and their types                                                                 | `hono` `^4`       |
 | `radius-sdk/client` | `createRadiusFetch`, balance, ERC-20 and Permit2 actions, `getSettlement`, and the receipt and error exports | `viem` `^2.48.11` |
 
 The root, server, and Hono entry points do not load viem at runtime. Install Hono only for `radius-sdk/hono`; install viem for `radius-sdk/client`.
@@ -80,6 +80,19 @@ It also accepts the [network overrides](#networks). Dynamic `payTo` and `price` 
 With `settle: 'before'`, the web-standard handler receives the [receipt](#receipts) as its second argument. Hono handlers read `c.get('radiusPayment')`; add `RadiusPaymentVariables` to the Hono `Variables` type. With `settle: 'after'`, payment is not yet settled during the handler; use `onSettled` to record the receipt.
 
 The SDK initializes the facilitator lazily on the first request matching a priced route, so creating either handler performs no module-scope I/O.
+
+### Proxy to an origin
+
+`proxyTo(origin)` returns a `(request) => Promise<Response>` function that forwards a request to an origin you do not change, keeping its method, path, and query. Use it as the paid handler, so paid requests reach the origin after settlement and requests that match no route pass through for free:
+
+```typescript
+import { proxyTo, radiusPayments } from 'radius-sdk/server';
+
+const pay = radiusPayments({ network: 'testnet', payTo: '0xYourWalletAddress', routes: { 'POST /v1/score': '0.01 SBC' } });
+export default { fetch: pay.wrap(proxyTo('http://127.0.0.1:8000')) };
+```
+
+With Hono, register `app.all('/*', (c) => toOrigin(c.req.raw))` after the middleware, where `toOrigin = proxyTo(origin)`. The request goes out without `Host`, hop-by-hop headers, and payment credentials (`PAYMENT-SIGNATURE`, `X-PAYMENT`, `Authorization: Payment`); other `Authorization` schemes pass through. A request body is buffered and the origin is asked for an uncompressed response (`Accept-Encoding: identity`). Redirects are returned, not followed.
 
 ### Settlement and streaming
 

@@ -7,6 +7,7 @@ export { RadiusFacilitatorClient, staticSupported, withUnknownOutcomes, type Fac
 export { RadiusExactScheme, type GasSponsoringMode, type SettleMode } from '../server/scheme.js';
 export { RadiusServer, createRadiusServer, RequestAdapter, toReceipt, type RadiusServerOptions, type ServerNetwork } from '../server/index.js';
 export { MppPayments, type MppServerOptions } from '../server/mpp.js';
+export { proxyTo } from '../server/proxy.js';
 
 export type PayTo<E extends Env> = ServerPayTo<Context<E>>;
 export type RouteSpec<E extends Env = Env> = ServerRouteSpec<Context<E>>;
