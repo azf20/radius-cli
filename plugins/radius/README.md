@@ -1,14 +1,25 @@
 # Radius development plugin
 
-The `radius-dev` Claude Code plugin provides three skills:
+The `radius-dev` Claude Code plugin provides four skills:
 
 - `radius-dev` for Radius Network application development
-- `x402` for Radius payment integrations
+- `x402` for paying x402 endpoints (agents, terminals, app buyers) and the protocol
+- `sell-api` for charging for an API or for articles and pages (including
+  charging AI crawlers while readers stay free): framework detection, `radius-sdk`
+  seller setup for Hono, Express, Next.js and Astro middleware, and Workers in
+  front of an origin, and verification with `radius-cli sell check`
 - `dripping-faucet` for testnet faucet workflows
 
-The SDK examples target `radius-sdk` 0.3.0 or later, and terminal wallet
-examples target `radius-cli` 0.4.0 or later (`wallet pay`). Install the peer dependency
-needed by the SDK entry point you use (`viem` for `/client`, `hono` for `/hono`).
+The SDK examples target `radius-sdk` 0.3.0 or later (`sell-api` targets 0.5.0
+or later, for MPP and several networks), and terminal wallet examples target
+`radius-cli` 0.4.0 or later (`wallet pay`); `radius-cli sell check` needs
+`radius-cli` 0.5.0. Install the peer dependency needed by the SDK entry point
+you use (`viem` for `/client`, `hono` for `/hono`).
+
+The `evals/` directory holds the Claude Code plugin eval cases. The
+`sell-oneshot` case shares its prompt with the repository's deterministic
+seller evaluation (`pnpm eval:payments:sell -- --case SELL-ONESHOT`), which
+boots the app an agent writes and pays it against a mock facilitator.
 
 Install it from the [Radius `tools` repository](https://github.com/radiustechsystems/tools):
 

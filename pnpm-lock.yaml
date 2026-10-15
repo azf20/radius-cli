@@ -20,6 +20,9 @@ importers:
       '@inquirer/prompts':
         specifier: ^7.0.0
         version: 7.10.1(@types/node@22.20.3)
+      '@x402/core':
+        specifier: 2.27.0
+        version: 2.27.0
       commander:
         specifier: ^12.1.0
         version: 12.1.0

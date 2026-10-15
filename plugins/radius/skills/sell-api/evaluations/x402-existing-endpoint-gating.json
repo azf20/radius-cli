@@ -1,0 +1,22 @@
+{
+    "name": "Gate an Existing Endpoint Without Deployment",
+    "skills": ["sell-api"],
+    "query": "Add x402 payment gating to this existing HTTP route on Radius testnet. Charge 0.001 SBC per request. Do not choose or configure deployment infrastructure.",
+    "context": "The user has an existing TypeScript HTTP API route and wants payment behavior added. Deployment is explicitly out of scope and should be handled later by the relevant platform skill.",
+    "expected_behavior": [
+        "Detects the project's framework from package.json and picks the matching radius-sdk wrapper: radius-sdk/hono, radius-sdk/server radiusPayments(), or createRadiusServer with @x402/express",
+        "Configures network 'testnet' explicitly, payTo from configuration, and the route priced '$0.001' (1000 atomic SBC units)",
+        "Registers the payment middleware before the paid handler and leaves free routes outside the route table",
+        "Leaves the default settle: 'before' so the handler only runs after settlement",
+        "Does not hand-build PAYMENT-REQUIRED, signatures, or facilitator /verify and /settle calls",
+        "Validates the unpaid request returns HTTP 402 with PAYMENT-REQUIRED, using radius-cli sell check with --price '$0.001' or curl -i",
+        "Leaves deployment as a handoff to a Cloudflare, Wrangler, Railway, or platform-specific skill"
+    ],
+    "success_criteria": [
+        "No deployment commands are run or recommended as part of the integration",
+        "No production configuration, secrets, domains, or infrastructure settings are changed",
+        "Amount uses 6-decimal raw units: 1000 for 0.001 SBC",
+        "The network is Radius testnet eip155:72344 and the default Radius testnet facilitator is used unless the user names another",
+        "The endpoint is payment-ready and can be checked with radius-cli sell check before platform deployment"
+    ]
+}

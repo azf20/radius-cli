@@ -1,14 +1,6 @@
 ---
 name: x402
-description: |
-  Integrate x402 HTTP payment protocol on Radius. Use when the user wants to:
-  monetize an API with per-request micropayments, add HTTP 402 payment gating to endpoints,
-  consume a paid x402 API, sign x402 payment headers, integrate with a facilitator service,
-  implement EIP-2612 permit + Permit2 payment signing, build pay-per-call services on Radius
-  using SBC token, or set up x402 middleware. Covers both server-side (protect your endpoints
-  with payment gating) and client-side (sign and pay for x402-protected endpoints). Use
-  `radius-cli wallet pay` for terminal consumption, `radius-sdk/client` for app buyers,
-  and `radius-sdk/hono` for Hono sellers.
+description: Pay for and understand x402 HTTP payments on Radius. Use when the user wants to call or consume a paid x402 (or MPP) API, pay an HTTP 402 challenge from an agent or terminal with radius-cli wallet pay, add a paying fetch to app code with radius-sdk/client createRadiusFetch, sign or inspect x402 payment headers (EIP-3009, Permit2, EIP-2612 gas sponsoring), check payment receipts, or understand the x402 protocol and facilitator API. To charge for, monetize, or paywall an API (the seller side), use the sell-api skill instead.
 published: true
 user-invocable: true
 ---
@@ -18,16 +10,13 @@ user-invocable: true
 ## What this Skill is for
 
 Use this Skill when the user asks to:
-- Add x402 payment gating to an API endpoint
-- Monetize an API with per-request micropayments
-- Build a pay-per-call or pay-per-query service
-- Consume or call an x402-protected API
-- Sign x402 payment headers (EIP-2612 + Permit2)
-- Integrate with an x402 facilitator service
-- Understand the x402 HTTP 402 payment flow
-- Set up x402 middleware for a server
+- Consume or call an x402-protected API (from an agent shell, a terminal, or app code)
+- Pay an HTTP 402 challenge safely, with a spending limit
+- Sign or inspect x402 payment headers (EIP-3009, Permit2, EIP-2612 gas sponsoring)
+- Read and reconcile payment receipts
+- Understand the x402 HTTP 402 payment flow or the facilitator API
 
-**Not this Skill:** For dApp development on Radius (wagmi, Foundry, event watching), use the **radius-dev** skill. For getting testnet/mainnet tokens, use the **dripping-faucet** skill. For direct on-chain payment patterns (pay-per-visit paywalls, streaming payments) that don't use x402 facilitators, see radius-dev's [micropayments.md](../radius-dev/references/micropayments.md). For platform deployment, hosting, domains, or infrastructure operations, use the relevant deployment skill (for example Cloudflare, Wrangler, Railway) after the x402 endpoint behavior is implemented.
+**Not this Skill:** To **charge** for an API (monetize it, add a paywall or 402 gating, accept x402 or MPP payments, verify a seller with `radius-cli sell check`), use the **sell-api** skill. For dApp development on Radius (wagmi, Foundry, event watching), use the **radius-dev** skill. For getting testnet/mainnet tokens, use the **dripping-faucet** skill. For direct on-chain payment patterns (pay-per-visit paywalls, streaming payments) that don't use x402 facilitators, see radius-dev's [micropayments.md](../radius-dev/references/micropayments.md).
 
 ## Protocol overview
 
@@ -95,31 +84,6 @@ fallbacks, testing, or routing, but their supported methods and response shapes 
 
 For chain definitions, RPC URLs, and explorer URLs, see the **radius-dev** skill.
 
-### Server-side config object
-
-**Mainnet:**
-```typescript
-const x402Config = {
-  asset: '0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb',
-  network: 'eip155:723487',
-  payTo: process.env.PAYMENT_ADDRESS!,          // your wallet
-  facilitatorUrl: 'https://facilitator.radiustech.xyz',
-  facilitatorApiKey: process.env.FACILITATOR_API_KEY, // optional
-  amount: '100',                                // 0.0001 SBC per request
-};
-```
-
-**Testnet:**
-```typescript
-const x402Config = {
-  asset: '0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb',
-  network: 'eip155:72344',
-  payTo: process.env.PAYMENT_ADDRESS!,
-  facilitatorUrl: 'https://facilitator.testnet.radiustech.xyz',
-  amount: '100',
-};
-```
-
 ### Client-side defaults
 
 ```typescript
@@ -185,14 +149,9 @@ Follow the shared Radius wallet convention from the **radius-dev** skill:
 
 ## Operating procedure
 
-### A. "I want to monetize my API with x402" (server-side)
+### A. "I want to monetize my API" (server-side)
 
-1. **Install the seller dependencies** — `npm install radius-sdk hono`.
-2. **Configure `radiusPayments()`** from `radius-sdk/hono` with an explicit network, recipient, route, and price. Follow the runnable [seller example](references/x402-server.md).
-3. **Test the endpoint behavior** — `curl` your local or already-hosted endpoint to verify it returns 402 with the intended requirements.
-4. **Handle settled requests** — the default `settle: 'before'` runs the handler after settlement. Record the payment context or use `onSettled` where the application needs it.
-5. **Get discovered** — register your service with x402 discovery endpoints so agents and buyers can find it programmatically. Facilitators that implement the `/discovery/resources` convention serve a machine-readable catalog of available services. See [x402-client.md § Discovering services](references/x402-client.md#discovering-x402-services) for the response format and known discovery endpoints.
-6. **Deploy separately if needed** — after local or existing-host validation, invoke the user's Cloudflare, Wrangler, Railway, or platform-specific skill to deploy. Do not stop at "deployment is out of scope" when the user explicitly asks for deployment; hand off after the x402 behavior is correct.
+Use the **sell-api** skill: it detects the framework, configures `radius-sdk` (Hono, web-standard handlers, Express, Next.js), and verifies the endpoint with `radius-cli sell check` before any deployment hand-off. This skill covers the buyer side and the protocol.
 
 ### B. "I want to consume a paid x402 API" (client-side)
 
@@ -238,10 +197,10 @@ network defaults for a local or custom environment.
 
 ### Environment variables
 
+Buyer-side variables. Seller configuration (`PAY_TO`, facilitator URL and key, MPP secret) is in the **sell-api** skill.
+
 | Variable | Required | Used by | Description |
 |----------|----------|---------|-------------|
-| `PAYMENT_ADDRESS` | Server | Server | Wallet address that receives SBC payments |
-| `FACILITATOR_API_KEY` | No | Server | Optional API key for the facilitator |
 | `RADIUS_HOME` | Client CLI | Client | Project/agent-scoped `radius-cli` wallet state directory |
 | `RADIUS_NETWORK` | Client CLI | Client | Radius network for `radius-cli` operations, usually `testnet` or `mainnet` |
 | `RADIUS_RPC_URL` | Client CLI/app code | Client | Optional RPC override for custom environments |
@@ -287,7 +246,7 @@ network defaults for a local or custom environment.
 - Full Radius docs corpus: fetch `https://docs.radiustech.xyz/llms-full.txt`
 
 **Local references:**
-- SDK Hono seller implementation and advanced protocol reference: [x402-server.md](references/x402-server.md)
+- Seller integrations (any framework): the **sell-api** skill
 - SDK app buyer implementation and advanced signing reference: [x402-client.md](references/x402-client.md)
 - Legacy one-off CLI payment access with curl + cast: [x402-cli-cast.md](references/x402-cli-cast.md)
 - Facilitator API reference: [facilitator-api.md](references/facilitator-api.md)

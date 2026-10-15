@@ -19,6 +19,7 @@ import { radiusPayments as honoPayments } from '../../packages/sdk/dist/hono/ind
 import { encodeRequest, parseMppChallenges, parseMppCredential, parseMppReceipt, serializeMppCredential } from '../../packages/sdk/dist/mpp.js';
 import { createRadiusServer, radiusPayments } from '../../packages/sdk/dist/server/index.js';
 import { createMockFacilitator } from './mock-facilitator.mjs';
+import { prepareApp, provision, run as runAsync, startProcess, cleanEnv, Unavailable } from './sell-frameworks.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const HERE = join(ROOT, 'evaluations/agent-payments');
@@ -52,7 +53,16 @@ const MPP_ADAPTERS = ['web', 'hono'];
 const RADIUS_KIND = { network: TESTNET.network, chainId: TESTNET.chainId, methods: ['eip3009', 'permit2'],
   extra: { name: TESTNET.asset.name, version: TESTNET.asset.version } };
 const BASE_KIND = { network: BASE_SEPOLIA.network, chainId: BASE_SEPOLIA.chainId, methods: ['eip3009'] };
-const CASE_IDS = ['SELL-ONESHOT', 'SELL-CHALLENGE', 'SELL-DUAL', 'SELL-MULTI-NET', 'SELL-FACILITATOR', 'SELL-REPLAY', 'SELL-ORDER', 'SELL-ROUTING'];
+const CASE_IDS = ['SELL-ONESHOT', 'SELL-CHALLENGE', 'SELL-DUAL', 'SELL-MULTI-NET', 'SELL-FACILITATOR', 'SELL-REPLAY', 'SELL-ORDER', 'SELL-ROUTING',
+  'SELL-NEXT-MW', 'SELL-ASTRO-MW', 'SELL-WORKER-PROXY', 'SELL-SELECTIVE'];
+/** Framework versions the SELL-NEXT-MW and SELL-ASTRO-MW cases provision on demand (see sell-frameworks.mjs). */
+const NEXT_DEPS = { next: '15.5.27', react: '19.1.1', 'react-dom': '19.1.1' };
+const ASTRO_TARGETS = [
+  { name: 'astro4', deps: { astro: '4.15.12', '@astrojs/node': '8.3.4' }, guard: 'middleware.astro4.js' },
+  { name: 'astro5', deps: { astro: '5.18.1', '@astrojs/node': '9.5.4' }, guard: 'middleware.astro5.js' },
+];
+const PUBLIC_HOST = 'www.example-publisher.test';
+const BROWSER_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
 const fromB64 = (value) => JSON.parse(Buffer.from(value, 'base64').toString());
 const b64 = (value) => Buffer.from(JSON.stringify(value)).toString('base64');
 const challengeOf = (res) => fromB64(res.headers.get('payment-required'));
@@ -279,11 +289,16 @@ function runCli(args, env) {
 
 // -- one-shot integration --------------------------------------------------------------------
 
-/** Packages a fresh seller app may import, as `npm i radius-sdk express @x402/express hono viem` would provide them. */
+/** The packages a fresh app of each framework has, as `npm i radius-sdk …` would provide them. Only these are linked and listed. */
+const ONESHOT_PACKAGES = { express: ['express', '@x402/express', '@x402/core', 'viem'], hono: ['hono', 'viem'] };
+/** The one-shot task, shared with the Claude plugin eval of the same name (its frontmatter is for that runner). */
+const ONESHOT_PROMPT = join(ROOT, 'plugins/radius/evals/sell-oneshot/prompt.md');
+
+/** A fresh seller app: a `package.json` naming the framework (the integrator detects it from there) and its `node_modules`. */
 async function scaffoldApp(framework) {
   const dir = await mkdtemp(join(tmpdir(), `radius-sell-oneshot-${framework}-`));
   const packages = { 'radius-sdk': join(ROOT, 'packages/sdk') };
-  for (const name of ['express', '@x402/express', '@x402/core', 'hono', 'viem']) packages[name] = await realpath(join(SDK_MODULES, name));
+  for (const name of ONESHOT_PACKAGES[framework]) packages[name] = await realpath(join(SDK_MODULES, name));
   for (const [name, target] of Object.entries(packages)) {
     await mkdir(dirname(join(dir, 'node_modules', name)), { recursive: true });
     await symlink(target, join(dir, 'node_modules', name), 'dir');
@@ -301,8 +316,8 @@ async function integrate(framework, dir) {
     await cp(join(HERE, 'fixtures/sell-oneshot', framework), dir, { recursive: true });
     return { integrator: 'reference' };
   }
-  const prompt = (await readFile(join(HERE, 'fixtures/sell-oneshot/PROMPT.md'), 'utf8'))
-    .replaceAll('{{FRAMEWORK}}', framework === 'express' ? 'Express' : 'Hono').replaceAll('{{REPO_ROOT}}', ROOT);
+  // The prompt names no framework and no repository path: the agent reads the framework from package.json and finds the sell-api skill itself.
+  const prompt = (await readFile(ONESHOT_PROMPT, 'utf8')).replace(/^---\n[\s\S]*?\n---\n/, '');
   const promptFile = join(dir, 'PROMPT.md');
   await writeFile(promptFile, prompt);
   // The agent gets no Radius wallet configuration: it writes code, it never pays.
@@ -361,6 +376,7 @@ async function run() {
   const args = process.argv.slice(2);
   if (args.includes('--list')) { process.stdout.write(`${CASE_IDS.join('\n')}\n`); return; }
   const only = args.includes('--case') ? args[args.indexOf('--case') + 1] : undefined;
+  if (args.includes('--skip-provisioned')) process.env.SELL_SKIP_PROVISIONED = '1'; // use frameworks already cached; never install
   if (only && !CASE_IDS.includes(only)) throw new Error(`Unknown case: ${only}`);
   const output = args.includes('--output') ? args[args.indexOf('--output') + 1] : join(HERE, 'results/sell.json');
   const rpc = await startRpc();
@@ -373,11 +389,14 @@ async function run() {
     if (only && only !== id) return;
     const errors = [];
     const xfails = [];
+    const skips = [];
+    let graded = 0;
     const observations = {};
     const closers = [];
     const t = {
       /** A hard assertion. */
       check: async (label, assertion) => {
+        graded++;
         try { await assertion(); } catch (error) { errors.push(`${label}: ${error.message}`); }
       },
       /**
@@ -385,12 +404,18 @@ async function run() {
        * If it starts passing, the case fails so the marker gets removed.
        */
       known: async (label, reason, assertion) => {
+        graded++;
         try {
           await assertion();
           errors.push(`${label}: expected failure no longer reproduces (${reason}); remove the XFAIL marker`);
         } catch (error) { xfails.push({ label, reason, detail: error.message }); }
       },
       observe: (key, value) => { observations[key] = value; },
+      /**
+       * Part of a case could not run here (a framework that cannot be installed offline). It is reported as SKIP, not a
+       * failure. A case where nothing else was graded is a SKIP as a whole.
+       */
+      skip: (label, reason) => { skips.push({ label, reason }); },
       facilitator: async (options) => {
         const f = await createMockFacilitator(options).start();
         closers.push(f.close);
@@ -405,10 +430,11 @@ async function run() {
     };
     try { await fn(t); } catch (error) { errors.push(error.stack ?? String(error)); }
     for (const close of closers.reverse()) await close().catch(() => {});
-    const status = errors.length ? 'fail' : xfails.length ? 'xfail' : 'pass';
-    cases.push({ id, status, pass: status !== 'fail', errors, xfails, observations, simulatedSettlement: true, verifiedNetworkSettlement: false });
-    if (status === 'xfail') for (const x of xfails) process.stdout.write(`XFAIL ${id}: ${x.label}: ${x.reason}\n`);
-    process.stdout.write(`${status === 'fail' ? 'FAIL' : status === 'xfail' ? 'XFAIL' : 'PASS'} ${id}\n`);
+    const status = errors.length ? 'fail' : skips.length && !graded ? 'skip' : xfails.length ? 'xfail' : 'pass';
+    cases.push({ id, status, pass: status !== 'fail', errors, xfails, skips, observations, simulatedSettlement: true, verifiedNetworkSettlement: false });
+    for (const x of xfails) process.stdout.write(`XFAIL ${id}: ${x.label}: ${x.reason}\n`);
+    for (const x of skips) process.stdout.write(`SKIP ${id}: ${x.label}: ${x.reason}\n`);
+    process.stdout.write(`${{ fail: 'FAIL', skip: 'SKIP', xfail: 'XFAIL', pass: 'PASS' }[status]} ${id}\n`);
     if (errors.length) process.stderr.write(`${errors.join('\n')}\n`);
   };
 
@@ -490,6 +516,17 @@ async function run() {
         await t.check(`${at} replayed payment is refused`, () => {
           assert.notEqual(replay.status, 200);
           assert.doesNotMatch(replay.text, /quarterly-sales/);
+          assert.equal(fac.settled.length, 1);
+        });
+
+        // The check the sell-api skill tells integrators to run before deploying, without paying.
+        const sellCheck = await runCli(['--json', 'sell', 'check', url, '--price', '$0.001', '--facilitator', fac.url], cliEnv);
+        let checked;
+        try { checked = JSON.parse(sellCheck.stdout); } catch { checked = undefined; }
+        t.observe(`${framework}.sellCheck`, checked ? { ok: checked.ok, summary: checked.summary, notPassed: checked.checks.filter((c) => c.status !== 'pass') } : { code: sellCheck.code, stderr: sellCheck.stderr.slice(-500) });
+        await t.check(`${at} radius-cli sell check passes`, () => {
+          assert.equal(sellCheck.code, 0, sellCheck.stderr || JSON.stringify(checked?.checks.filter((c) => c.status === 'fail')));
+          assert.equal(checked.ok, true);
           assert.equal(fac.settled.length, 1);
         });
         t.observe(`${framework}.appOutputTail`, app.output().slice(-500));
@@ -1016,6 +1053,493 @@ async function run() {
       });
       t.observe('genericRouteDeclaredFirst.premiumPrice', challengeOf(await fetch(`${genericFirst.url}/api/premium/x`)).accepts[0].amount);
     });
+
+    // -- Publisher shapes: middleware in a real framework, a Worker in front of an origin, humans-free/agents-pay -----
+
+    /** Provision `deps` and a scratch copy of a fixture; a part that cannot run here (offline) is a SKIP, not a failure. */
+    const frameworkApp = async (t, label, { key, deps, fixture, files }) => {
+      let provisioned;
+      try {
+        provisioned = await provision(key, deps);
+      } catch (error) {
+        if (!(error instanceof Unavailable)) throw error;
+        t.skip(label, error.message);
+        return undefined;
+      }
+      const app = await prepareApp({ provisioned, fixture: join(HERE, 'fixtures', fixture), sdkRoot: join(ROOT, 'packages/sdk'), files });
+      t.defer(app.remove);
+      return { ...app, provisioned };
+    };
+    const sellerEnv = (fac, extra = {}) => cleanEnv({ PAY_TO, RADIUS_FACILITATOR_URL: fac.url, MPP_SECRET_KEY: SECRET_KEY, ...extra });
+    const httpUp = (url, path = '/') => async () => (await fetch(`${url}${path}`)).status === 200;
+    const forwarded = { 'x-forwarded-host': PUBLIC_HOST, 'x-forwarded-proto': 'https' };
+    const noContent = (r) => assert.doesNotMatch(r.text, /CONTENT:/);
+
+    await execute('SELL-NEXT-MW', async (t) => {
+      const fac = await radiusFacilitator(t);
+      const app = await frameworkApp(t, `next@${NEXT_DEPS.next}`, { key: `next-${NEXT_DEPS.next}`, deps: NEXT_DEPS, fixture: 'sell-next' });
+      if (!app) return;
+      const env = sellerEnv(fac, { NEXT_TELEMETRY_DISABLED: '1' });
+      const next = join(app.provisioned, 'node_modules/next/dist/bin/next');
+      const build = await runAsync(process.execPath, [next, 'build'], { cwd: app.dir, env });
+      await t.check('next build succeeds', () => assert.equal(build.code, 0, build.output.slice(-1500)));
+      if (build.code !== 0) return;
+      const manifest = JSON.parse(await readFile(join(app.dir, '.next/server/middleware-manifest.json'), 'utf8'));
+      await t.check('middleware is built for the edge runtime', () => assert.ok(manifest.middleware['/'].files.some((f) => f.includes('edge-runtime-webpack'))));
+      const buildId = (await readFile(join(app.dir, '.next/BUILD_ID'), 'utf8')).trim();
+
+      const port = await freePort();
+      const url = `http://127.0.0.1:${port}`;
+      const server = await startProcess(process.execPath, [next, 'start', '-p', String(port), '-H', '127.0.0.1'], { cwd: app.dir, env, name: 'next start', ready: httpUp(url) });
+      t.defer(server.stop);
+      const get = (path, init) => fetch(`${url}${path}`, init).then(read);
+      const dataUrl = `/_next/data/${buildId}/legacy/one.json`;
+      // ISR (App Router, generateStaticParams), a fully static page, a dynamic page, and a Pages Router page and its JSON data URL.
+      const pages = ['/articles/hello', '/static', '/dynamic', '/legacy/one', dataUrl];
+
+      for (const path of pages) {
+        const unpaid = await get(path);
+        await t.check(`unpaid ${path} gets a 402 with no content, not cacheable`, () => {
+          assert.equal(unpaid.status, 402);
+          noContent(unpaid);
+          assert.match(unpaid.headers.get('cache-control') ?? '', /no-store/);
+        });
+      }
+      const offer = challengeOf(await fetch(`${url}/static`)).accepts[0];
+      await t.check('the 402 offers the configured price on Radius testnet', () => {
+        assert.deepEqual([offer.network, offer.amount, offer.payTo.toLowerCase()], [TESTNET.network, '1000', PAY_TO.toLowerCase()]);
+      });
+      await t.check('the 402 also carries an MPP challenge', async () => {
+        assert.equal(parseMppChallenges((await fetch(`${url}/static`)).headers.get('www-authenticate')).length, 1);
+      });
+      await t.check('an unpaid RSC request (?_rsc=, RSC header) gets a 402', async () => {
+        const rsc = await get('/articles/hello?_rsc=eval', { headers: { rsc: '1' } });
+        assert.equal(rsc.status, 402);
+        noContent(rsc);
+      });
+      for (const path of ['/articles/hello', '/static', '/dynamic', '/legacy/one']) {
+        await t.check(`unpaid HEAD ${path} gets a 402 (HEAD is priced)`, async () => assert.equal((await fetch(`${url}${path}`, { method: 'HEAD' })).status, 402));
+      }
+
+      const human = await get('/articles/hello', { headers: { 'user-agent': BROWSER_UA } });
+      t.observe('freePageCacheControl', human.headers.get('cache-control'));
+      await t.check('a browser User-Agent reads the page free (no 402, nothing settled)', () => {
+        assert.equal(human.status, 200);
+        assert.match(human.text, /CONTENT:article/);
+        assert.equal(human.headers.get('payment-required'), null);
+        assert.equal(fac.settled.length, 0);
+      });
+
+      for (const path of pages) {
+        const before = fac.settled.length;
+        const res = await buyer()(`${url}${path}`);
+        const paid = await read(res);
+        await t.check(`x402 payment unlocks ${path}: 200, content, receipt, private, settled once`, () => {
+          assert.equal(paid.status, 200);
+          assert.match(paid.text, /CONTENT:/);
+          assert.equal(getPaymentReceipt(res, TESTNET)?.success, true);
+          assert.match(paid.headers.get('cache-control') ?? '', /\bprivate\b/);
+          assert.equal(fac.settled.length, before + 1);
+        });
+      }
+      const mppBefore = fac.settled.length;
+      const viaMpp = await read(await buyer({ protocols: ['mpp'] })(`${url}/articles/world`));
+      await t.check('MPP payment unlocks an ISR page and returns Payment-Receipt', () => {
+        assert.equal(viaMpp.status, 200);
+        assert.match(viaMpp.text, /CONTENT:article/);
+        assert.ok(viaMpp.headers.get('payment-receipt'));
+        assert.equal(fac.settled.length, mppBefore + 1);
+      });
+      await t.check('a paid request does not poison the ISR cache: the next unpaid request is charged', async () => assert.equal((await get('/articles/hello')).status, 402));
+
+      // Paid 404: the middleware settles before Next renders, and NextResponse.next() is always 200 to the SDK.
+      const missingSlug = await get('/articles/nope');
+      const settledBeforeMissing = fac.settled.length;
+      const missingPaid = await read(await buyer()(`${url}/articles/nope`));
+      await t.check('mitigation: validated slugs only. An unknown slug is a free 404 with no payment challenge', () => {
+        assert.equal(missingSlug.status, 404);
+        assert.equal(missingSlug.headers.get('payment-required'), null);
+        assert.equal(missingPaid.status, 404);
+        assert.equal(fac.settled.length, settledBeforeMissing);
+      });
+      await t.check('without validation a missing page is still priced (402)', async () => assert.equal((await get('/naive/nope')).status, 402));
+      const settledBeforeNaive = fac.settled.length;
+      const naivePaid = await read(await buyer()(`${url}/naive/nope`));
+      t.observe('naiveMissingPage', { status: naivePaid.status, settled: fac.settled.length - settledBeforeNaive });
+      await t.known('a paid request for a missing page is not settled', 'middleware settles before Next renders; NextResponse.next() is always 200, so the 404 is invisible to the SDK',
+        () => assert.equal(fac.settled.length, settledBeforeNaive));
+
+      // `settle: 'after'` waits for the response, but NextResponse.next() is a 200 whatever page Next renders next.
+      const settledBeforeLazy = fac.settled.length;
+      const lazyPaid = await read(await buyer()(`${url}/lazy/nope`));
+      t.observe('afterModeMissingPage', { status: lazyPaid.status, settled: fac.settled.length - settledBeforeLazy });
+      await t.check("recorded: settle: 'after' in middleware still charges a missing page", () => {
+        assert.equal(lazyPaid.status, 404);
+        assert.equal(fac.settled.length, settledBeforeLazy + 1);
+      });
+
+      // resource.url: `next start` builds req.url from its own hostname.
+      const rebuilt = challengeOf(await fetch(`${url}/articles/hello`, { headers: forwarded })).resource.url;
+      await t.check('mitigation: rebuilding the request from x-forwarded-host/proto names the public URL in resource.url', () => assert.equal(rebuilt, `https://${PUBLIC_HOST}/articles/hello`));
+      await t.check('mitigation: without forwarded headers resource.url is the requested URL', async () => {
+        assert.equal(challengeOf(await fetch(`${url}/articles/hello`)).resource.url, `${url}/articles/hello`);
+      });
+      const naiveUrl = challengeOf(await fetch(`${url}/naive/hello`, { headers: forwarded })).resource.url;
+      t.observe('naiveResourceUrl', naiveUrl);
+      await t.known('pay(req) with the raw req.url: resource.url names the forwarded public host', 'next start builds req.url from its own hostname (localhost) and ignores Host and X-Forwarded-Host; only X-Forwarded-Proto is applied',
+        () => assert.equal(naiveUrl, `https://${PUBLIC_HOST}/naive/hello`));
+
+      const settledBeforeCheck = fac.settled.length;
+      const sellCheck = await runCli(['--json', 'sell', 'check', `${url}/articles/hello`, '--price', '$0.001', '--facilitator', fac.url, '--probe-head'], cliEnv);
+      let checked;
+      try { checked = JSON.parse(sellCheck.stdout); } catch { checked = undefined; }
+      t.observe('sellCheck', checked ? { ok: checked.ok, summary: checked.summary, notPassed: checked.checks.filter((c) => c.status !== 'pass') } : { code: sellCheck.code, stderr: sellCheck.stderr.slice(-500) });
+      await t.check('radius-cli sell check passes against the middleware (nothing paid)', () => {
+        assert.equal(sellCheck.code, 0, sellCheck.stderr || JSON.stringify(checked?.checks.filter((c) => c.status === 'fail')));
+        assert.equal(fac.settled.length, settledBeforeCheck);
+      });
+    });
+
+    await execute('SELL-ASTRO-MW', async (t) => {
+      const fixtureDir = join(HERE, 'fixtures/sell-astro');
+      for (const target of ASTRO_TARGETS) {
+        const at = `[${target.name}]`;
+        const fac = await radiusFacilitator(t);
+        const label = `astro@${target.deps.astro}`;
+        /** A scratch app with `variant` as src/middleware.js, built with the real `astro build`. */
+        const build = async (variant, extraEnv = {}) => {
+          const app = await frameworkApp(t, label, { key: `${target.name}-${target.deps.astro}`, deps: target.deps, fixture: 'sell-astro', files: { 'src/middleware.js': join(fixtureDir, 'variants', variant) } });
+          if (!app) return undefined;
+          const env = sellerEnv(fac, { ASTRO_TELEMETRY_DISABLED: '1', ...extraEnv });
+          const result = await runAsync(process.execPath, [join(app.provisioned, 'node_modules/astro/astro.js'), 'build'], { cwd: app.dir, env });
+          const html = await readFile(join(app.dir, 'dist/client/prerendered/index.html'), 'utf8').catch(() => '');
+          return { app, env, result, html };
+        };
+
+        // An unguarded middleware also runs at build time, for the prerendered page.
+        const bad = await build('middleware.unguarded.js');
+        if (!bad) continue;
+        await t.check(`${at} an unguarded middleware still lets the build finish`, () => assert.equal(bad.result.code, 0, bad.result.output.slice(-1500)));
+        t.observe(`${target.name}.unguardedPrerenderedOutput`, bad.html.slice(0, 200));
+        await t.known(`${at} prerendered output survives an unguarded middleware`, 'the build renders the page through the middleware, pay() answers that request with its 402, and Astro writes that body to dist/client/prerendered/index.html',
+          () => assert.match(bad.html, /CONTENT:prerendered/));
+
+        const guarded = (extraEnv) => build(target.guard, extraEnv);
+        const runGuarded = async (extraEnv, check) => {
+          const good = await guarded(extraEnv);
+          if (!good) return;
+          await t.check(`${at} guarded build succeeds and keeps the prerendered page intact`, () => {
+            assert.equal(good.result.code, 0, good.result.output.slice(-1500));
+            assert.match(good.html, /CONTENT:prerendered/);
+          });
+          if (good.result.code !== 0) return;
+          const port = await freePort();
+          const url = `http://127.0.0.1:${port}`;
+          const server = await startProcess(process.execPath, ['dist/server/entry.mjs'], { cwd: good.app.dir, env: { ...good.env, HOST: '127.0.0.1', PORT: String(port) }, name: `astro ${target.name}`, ready: httpUp(url) });
+          t.defer(server.stop);
+          await check(url);
+        };
+
+        await runGuarded({}, async (url) => {
+          const get = (path, init) => fetch(`${url}${path}`, init).then(read);
+          const unpaid = await get('/articles/hello');
+          await t.check(`${at} SSR page: unpaid gets a 402 with no content, not cacheable`, () => {
+            assert.equal(unpaid.status, 402);
+            noContent(unpaid);
+            assert.match(unpaid.headers.get('cache-control') ?? '', /no-store/);
+          });
+          await t.check(`${at} SSR page: unpaid HEAD gets a 402`, async () => assert.equal((await fetch(`${url}/articles/hello`, { method: 'HEAD' })).status, 402));
+          await t.check(`${at} the free home page needs no payment`, async () => assert.equal((await get('/')).status, 200));
+          for (const protocols of [['x402'], ['mpp']]) {
+            const before = fac.settled.length;
+            const res = await buyer({ protocols })(`${url}/articles/hello`);
+            const paid = await read(res);
+            await t.check(`${at} SSR page: ${protocols[0]} payment settles once and delivers`, () => {
+              assert.equal(paid.status, 200);
+              assert.match(paid.text, /CONTENT:ssr:hello/);
+              assert.match(paid.headers.get('cache-control') ?? '', /\bprivate\b/);
+              assert.equal(fac.settled.length, before + 1);
+              if (protocols[0] === 'x402') assert.equal(getPaymentReceipt(res, TESTNET)?.success, true);
+              else assert.ok(paid.headers.get('payment-receipt'));
+            });
+          }
+
+          // Prerendered pages are static files the adapter serves without running the request-time middleware.
+          const stat = await get('/prerendered');
+          t.observe(`${target.name}.prerenderedUnpaid`, { status: stat.status, cacheControl: stat.headers.get('cache-control') });
+          await t.known(`${at} a prerendered page listed in the routes is gated`, 'prerendered pages are served as static files and the request-time middleware does not gate them', () => {
+            assert.equal(stat.status, 402);
+            noContent(stat);
+          });
+
+          const rebuilt = challengeOf(await fetch(`${url}/articles/hello`, { headers: forwarded })).resource.url;
+          const plain = challengeOf(await fetch(`${url}/articles/hello`)).resource.url;
+          t.observe(`${target.name}.resourceUrl`, { plain, forwarded: rebuilt });
+          if (target.name === 'astro5') {
+            await t.known(`${at} resource.url honours X-Forwarded-Host`, 'Astro 5 ignores Host and X-Forwarded-Host unless security.allowedDomains names the host: request.url says http://localhost', () => assert.equal(rebuilt, `https://${PUBLIC_HOST}/articles/hello`));
+          } else {
+            await t.check(`${at} resource.url honours X-Forwarded-Host and X-Forwarded-Proto`, () => {
+              assert.equal(rebuilt, `https://${PUBLIC_HOST}/articles/hello`);
+              assert.equal(plain, `${url}/articles/hello`);
+            });
+          }
+        });
+
+        if (target.name === 'astro5') {
+          await runGuarded({ EVAL_ALLOWED_HOST: PUBLIC_HOST }, async (url) => {
+            const rebuilt = challengeOf(await fetch(`${url}/articles/hello`, { headers: forwarded })).resource.url;
+            await t.check(`${at} mitigation: security.allowedDomains makes resource.url honour X-Forwarded-Host`, () => assert.equal(rebuilt, `https://${PUBLIC_HOST}/articles/hello`));
+          });
+        }
+      }
+    });
+
+    await execute('SELL-WORKER-PROXY', async (t) => {
+      const wrangler = join(SDK_MODULES, 'wrangler/bin/wrangler.js');
+      if (!(await readFile(wrangler).then(() => true, () => false))) { t.skip('wrangler', `${wrangler} is not installed (pnpm install)`); return; }
+      const fac = await radiusFacilitator(t);
+      const articles = new Set(['hello', 'world']);
+      const origin = { hits: [], last: undefined };
+      const originServer = await listen(createServer((req, res) => {
+        origin.hits.push(req.url);
+        origin.last = req.headers;
+        const slug = req.url.split('?')[0].split('/')[2];
+        if (req.url.startsWith('/articles/') && !articles.has(slug)) { res.writeHead(404, { 'content-type': 'text/html' }); res.end('NOT FOUND'); return; }
+        // What a CMS origin behind a CDN typically sends.
+        res.writeHead(200, {
+          'content-type': 'text/html', 'cache-control': 'public, s-maxage=600', 'cdn-cache-control': 'max-age=600', 'surrogate-control': 'max-age=600',
+          'surrogate-key': 'article-hello', 'set-cookie': 'origin_session=abc; Path=/; HttpOnly',
+        });
+        res.end(`<html><body><article>CONTENT:origin ${req.url}</article></body></html>`);
+      }));
+      t.defer(originServer.close);
+
+      const app = await prepareApp({ provisioned: tmpdir(), fixture: join(HERE, 'fixtures/sell-worker'), sdkRoot: join(ROOT, 'packages/sdk') });
+      t.defer(app.remove);
+      const state = await mkdtemp(join(tmpdir(), 'radius-sell-wrangler-'));
+      t.defer(() => rm(state, { recursive: true, force: true }));
+      const port = await freePort();
+      const url = `http://127.0.0.1:${port}`;
+      const vars = { ORIGIN: originServer.url, RADIUS_FACILITATOR_URL: fac.url, PAY_TO, MPP_SECRET_KEY: SECRET_KEY };
+      const server = await startProcess(process.execPath, [wrangler, 'dev', '--ip', '127.0.0.1', '--port', String(port), '--inspector-port', String(await freePort()),
+        ...Object.entries(vars).flatMap(([k, v]) => ['--var', `${k}:${v}`])], {
+        cwd: app.dir, name: 'wrangler dev (workerd)', timeoutMs: 90_000,
+        env: cleanEnv({ CI: '1', WRANGLER_SEND_METRICS: 'false', XDG_CONFIG_HOME: state, WRANGLER_HOME: state, WRANGLER_LOG: 'error' }),
+        ready: httpUp(url, '/about'),
+      });
+      t.defer(server.stop);
+      const get = (path, init) => fetch(`${url}${path}`, init).then(read);
+      const hitsFor = (prefix) => origin.hits.filter((h) => h.startsWith(prefix)).length;
+      origin.hits.length = 0;
+
+      await t.check('a path outside the routes is passed to the origin free', async () => {
+        const about = await get('/about');
+        assert.equal(about.status, 200);
+        assert.match(about.text, /CONTENT:origin \/about/);
+      });
+      origin.hits.length = 0;
+      const unpaid = await get('/articles/hello');
+      await t.check('unpaid gets a 402 with no content, not cacheable, and the origin is not called', () => {
+        assert.equal(unpaid.status, 402);
+        noContent(unpaid);
+        assert.match(unpaid.headers.get('cache-control') ?? '', /no-store/);
+        assert.equal(origin.hits.length, 0);
+      });
+      await t.check('the 402 carries the x402 offer and an MPP challenge', () => {
+        assert.equal(challengeOf(unpaid).accepts[0].amount, '1000');
+        assert.equal(parseMppChallenges(unpaid.headers.get('www-authenticate')).length, 1);
+        assert.equal(challengeOf(unpaid).resource.url, `${url}/articles/hello`);
+      });
+      await t.check('unpaid HEAD gets a 402 and the origin is not called', async () => {
+        assert.equal((await fetch(`${url}/articles/hello`, { method: 'HEAD' })).status, 402);
+        assert.equal(origin.hits.length, 0);
+      });
+
+      const rec = recorder();
+      const res = await buyer({ fetch: rec.fetch })(`${url}/articles/hello`);
+      const paid = await read(res);
+      t.observe('paidResponseHeaders', Object.fromEntries(['cache-control', 'cdn-cache-control', 'surrogate-control', 'surrogate-key', 'set-cookie', 'payment-response'].map((h) => [h, paid.headers.get(h)])));
+      await t.check('x402 payment: 200, the origin body, receipt, settled once', () => {
+        assert.equal(paid.status, 200);
+        assert.match(paid.text, /CONTENT:origin \/articles\/hello/);
+        assert.equal(getPaymentReceipt(res, TESTNET)?.success, true);
+        assert.equal(fac.settled.length, 1);
+        assert.equal(hitsFor('/articles/hello'), 1);
+      });
+      await t.check('the payment credential is not forwarded to the origin', () => {
+        assert.equal(origin.last['payment-signature'], undefined);
+        assert.equal(origin.last.authorization, undefined);
+      });
+      await t.check('paid response is marked private', () => assert.match(paid.headers.get('cache-control') ?? '', /\bprivate\b/));
+      // Recorded as observed: the SDK adds `private` to the origin's Cache-Control and passes every other header through.
+      await t.check('origin Set-Cookie passes through to the payer unchanged (recorded behavior)', () => assert.match(paid.headers.get('set-cookie') ?? '', /origin_session=abc/));
+      await t.known('paid response carries no CDN-cacheable headers from the origin', "the SDK appends `private` to Cache-Control but leaves the origin's Surrogate-Control, CDN-Cache-Control and Surrogate-Key; Fastly and Cloudflare honour those ahead of Cache-Control (from their documentation, not exercised here)", () => {
+        assert.equal(paid.headers.get('surrogate-control'), null);
+        assert.equal(paid.headers.get('cdn-cache-control'), null);
+      });
+
+      const viaMpp = await read(await buyer({ protocols: ['mpp'] })(`${url}/articles/world`));
+      await t.check('MPP payment: 200, the origin body, Payment-Receipt, settled once more', () => {
+        assert.equal(viaMpp.status, 200);
+        assert.match(viaMpp.text, /CONTENT:origin \/articles\/world/);
+        assert.ok(viaMpp.headers.get('payment-receipt'));
+        assert.equal(fac.settled.length, 2);
+      });
+
+      // Mitigation: strip the origin's CDN caching directives from the paid response in the Worker.
+      const safeRes = await buyer()(`${url}/safe/hello`);
+      const safe = await read(safeRes);
+      await t.check('mitigation: removing the CDN caching headers leaves a private, no-store paid response', () => {
+        assert.equal(safe.status, 200);
+        assert.match(safe.text, /CONTENT:origin \/articles\/hello/);
+        assert.equal(getPaymentReceipt(safeRes, TESTNET)?.success, true);
+        assert.deepEqual(['surrogate-control', 'cdn-cache-control', 'surrogate-key'].map((h) => safe.headers.get(h)), [null, null, null]);
+        assert.equal(safe.headers.get('cache-control'), 'private, no-store');
+        assert.equal(fac.settled.length, 3);
+      });
+
+      // Paid 404 from the origin: its status is visible here, so `settle: 'after'` can skip the charge.
+      const before = fac.settled.length;
+      const missing = await read(await buyer()(`${url}/articles/nope`));
+      t.observe('missingPageSettleBefore', { status: missing.status, settled: fac.settled.length - before });
+      await t.known('a paid request for a page the origin 404s is not settled (settle: before)', "the default `settle: 'before'` charges before the origin answers", () => assert.equal(fac.settled.length, before));
+      const afterBefore = fac.settled.length;
+      const missingAfter = await read(await buyer()(`${url}/after/nope`));
+      await t.check("mitigation: settle: 'after' does not charge when the origin answers 404", () => {
+        assert.equal(missingAfter.status, 404);
+        assert.equal(fac.settled.length, afterBefore);
+      });
+      const okAfter = await read(await buyer()(`${url}/after/hello`));
+      await t.check("settle: 'after' still charges when the origin answers 200", () => {
+        assert.equal(okAfter.status, 200);
+        assert.match(okAfter.text, /CONTENT:origin \/articles\/hello/);
+        assert.equal(fac.settled.length, afterBefore + 1);
+      });
+    });
+
+    await execute('SELL-SELECTIVE', async (t) => {
+      const { createGate } = await import(pathToFileURL(join(HERE, 'fixtures/sell-selective/gate.mjs')).href);
+      const fac = await radiusFacilitator(t);
+      const pay = radiusPayments({
+        network: 'testnet', payTo: PAY_TO, facilitator: { url: fac.url }, mpp: { secretKey: SECRET_KEY },
+        routes: { 'GET /articles/*': '$0.001', 'HEAD /articles/*': '$0.001' },
+      });
+      let originRuns = 0;
+      const SUBSCRIBER = 'sub_9f2c1e';
+      const cookieOf = (request) => /(?:^|;\s*)session=([^;]+)/.exec(request.headers.get('cookie') ?? '')?.[1];
+      const gate = createGate({
+        pay,
+        isSubscriber: (request) => cookieOf(request) === SUBSCRIBER, // verified against the subscriber store, not merely present
+        origin: () => {
+          originRuns++;
+          return new Response('<html><body><article>CONTENT:article</article></body></html>', { headers: { 'content-type': 'text/html', 'cache-control': 'public, s-maxage=60' } });
+        },
+      });
+      const site = await serveFetch(gate);
+      t.defer(site.close);
+      const page = `${site.url}/articles/hello`;
+      const asClient = (headers, method = 'GET') => fetch(page, { method, headers }).then(read);
+      const settled = () => fac.settled.length;
+
+      const human = await asClient({ 'user-agent': BROWSER_UA });
+      t.observe('humanResponseCacheControl', human.headers.get('cache-control'));
+      await t.check('a browser User-Agent reads the page free: 200, no challenge, facilitator untouched', () => {
+        assert.equal(human.status, 200);
+        assert.match(human.text, /CONTENT:article/);
+        assert.equal(human.headers.get('payment-required'), null);
+        assert.equal(human.headers.get('www-authenticate'), null);
+        assert.deepEqual([fac.calls.supported, fac.calls.verify, fac.calls.settle], [0, 0, 0]);
+      });
+      await t.check('a browser HEAD is free too', async () => assert.equal((await asClient({ 'user-agent': BROWSER_UA }, 'HEAD')).status, 200));
+
+      originRuns = 0;
+      const agents = {
+        'a vendor crawler UA (GPTBot)': { 'user-agent': 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.1; +https://openai.com/gptbot)' },
+        'a retrieval agent UA (ChatGPT-User)': { 'user-agent': 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0; +https://openai.com/bot' },
+        'a ClaudeBot UA': { 'user-agent': 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; ClaudeBot/1.0; +claudebot@anthropic.com)' },
+        'a script (no browser UA)': { 'user-agent': 'python-requests/2.32.0' },
+        'a bare fetch (the default node User-Agent)': {},
+        'a browser UA plus a Signature-Agent header (Web Bot Auth claim)': { 'user-agent': BROWSER_UA, 'signature-agent': '"https://agent.example"' },
+      };
+      for (const [label, headers] of Object.entries(agents)) {
+        const r = await asClient(headers);
+        await t.check(`${label} gets a 402 with no content`, () => {
+          assert.equal(r.status, 402);
+          noContent(r);
+          assert.match(r.headers.get('cache-control') ?? '', /no-store/);
+        });
+      }
+      await t.check('a bot HEAD gets a 402', async () => assert.equal((await asClient({ 'user-agent': 'GPTBot/1.1' }, 'HEAD')).status, 402));
+      await t.check('no 402 request reached the origin', () => assert.equal(originRuns, 0));
+
+      const rec = recorder();
+      const botBuyer = buyer({ fetch: rec.fetch });
+      const viaX402 = await botBuyer(page, { headers: { 'user-agent': 'GPTBot/1.1' } });
+      const paid = await read(viaX402);
+      await t.check('a bot pays with the SDK buyer: 200, content, receipt, settled once, origin runs once', () => {
+        assert.equal(paid.status, 200);
+        assert.match(paid.text, /CONTENT:article/);
+        assert.equal(getPaymentReceipt(viaX402, TESTNET)?.success, true);
+        assert.equal(settled(), 1);
+        assert.equal(originRuns, 1);
+      });
+      const viaMpp = await read(await buyer({ protocols: ['mpp'] })(page, { headers: { 'user-agent': 'GPTBot/1.1' } }));
+      await t.check('a bot pays over MPP too', () => {
+        assert.equal(viaMpp.status, 200);
+        assert.ok(viaMpp.headers.get('payment-receipt'));
+        assert.equal(settled(), 2);
+      });
+
+      // A payment header is handled whatever the client claims to be.
+      const held = await heldPayment(page);
+      const humanWithPayment = await read(await submit(page, held, { headers: { 'user-agent': BROWSER_UA } }));
+      await t.check('a payment header from a browser-looking client is still verified and settled', () => {
+        assert.equal(humanWithPayment.status, 200);
+        assert.ok(humanWithPayment.headers.get('payment-response'));
+        assert.equal(settled(), 3);
+      });
+
+      // Documented limitation: a header check cannot tell an agent that claims to be a browser from a browser.
+      const before = settled();
+      const spoofed = await asClient({ 'user-agent': BROWSER_UA });
+      t.observe('spoofedBrowserUa', { status: spoofed.status, charged: settled() - before, note: 'a client that sends a browser User-Agent is treated as a human; verify bots with Web Bot Auth or the CDN bot score instead' });
+      await t.check('LIMITATION: an agent sending a browser User-Agent is served free (UA checks are spoofable)', () => {
+        assert.equal(spoofed.status, 200);
+        assert.match(spoofed.text, /CONTENT:article/);
+        assert.equal(settled(), before);
+      });
+
+      // Subscribers read free even when they look like bots; the credential is verified, not just present.
+      // The check the skill tells integrators to run, with a header: it can also prove that humans stay free.
+      const sellCheckAs = async (userAgent) => {
+        const out = await runCli(['--json', 'sell', 'check', page, '--price', '$0.001', '--facilitator', fac.url, '-H', `User-Agent: ${userAgent}`], cliEnv);
+        let json;
+        try { json = JSON.parse(out.stdout); } catch { json = undefined; }
+        return { code: out.code, json };
+      };
+      const asBot = await sellCheckAs('GPTBot/1.1');
+      await t.check('radius-cli sell check -H "User-Agent: GPTBot/1.1" passes against the gate (nothing paid)', () => {
+        assert.equal(asBot.code, 0, JSON.stringify(asBot.json?.checks.filter((c) => c.status === 'fail')));
+        assert.equal(settled(), before);
+      });
+      const asHuman = await sellCheckAs(BROWSER_UA);
+      await t.check('radius-cli sell check with a browser User-Agent fails: that request is served without payment', () => {
+        assert.notEqual(asHuman.code, 0);
+        assert.ok(asHuman.json?.checks.some((c) => c.status === 'fail'));
+      });
+
+      const subscriber = await asClient({ 'user-agent': 'GPTBot/1.1', cookie: `session=${SUBSCRIBER}` });
+      await t.check('a verified subscriber cookie bypasses the gate', () => {
+        assert.equal(subscriber.status, 200);
+        assert.match(subscriber.text, /CONTENT:article/);
+        assert.equal(settled(), before);
+      });
+      const forged = await asClient({ 'user-agent': 'GPTBot/1.1', cookie: 'session=forged' });
+      await t.check('a forged subscriber cookie does not', () => {
+        assert.equal(forged.status, 402);
+        noContent(forged);
+      });
+    });
   } finally {
     await rpc.close();
     await rm(home, { recursive: true, force: true });
@@ -1028,13 +1552,14 @@ async function run() {
     dirtyCheckout: execFileSync('git', ['status', '--porcelain'], { cwd: ROOT, encoding: 'utf8' }).trim().length > 0,
     generatedAt: new Date().toISOString(), integrator: process.env.SELL_INTEGRATOR_CMD ? 'command' : 'reference',
     simulatedOnly: true, verifiedNetworkSettlement: false,
-    total: cases.length, passed: count('pass'), expectedFailures: count('xfail'), failed: count('fail'),
+    total: cases.length, passed: count('pass'), expectedFailures: count('xfail'), skipped: count('skip'), failed: count('fail'),
     knownGaps: cases.flatMap((c) => c.xfails.map((x) => ({ id: c.id, ...x }))),
+    skips: cases.flatMap((c) => c.skips.map((x) => ({ id: c.id, ...x }))),
     cases,
   };
   await mkdir(dirname(resolve(output)), { recursive: true });
   await writeFile(resolve(output), `${JSON.stringify(report, null, 2)}\n`);
-  process.stdout.write(`\n${report.passed}/${report.total} passed, ${report.expectedFailures} expected failure(s), ${report.failed} failed. Report: ${resolve(output)}\n`);
+  process.stdout.write(`\n${report.passed}/${report.total} passed, ${report.expectedFailures} expected failure(s), ${report.skipped} skipped, ${report.failed} failed. Report: ${resolve(output)}\n`);
   if (report.failed) process.exitCode = 1;
 }
 

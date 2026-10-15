@@ -1,0 +1,21 @@
+{
+    "name": "Charge AI Agents for Articles in Next.js or Astro Middleware",
+    "skills": ["sell-api"],
+    "query": "Our news site serves articles at /articles/<slug>. Make AI crawlers and agents pay 0.001 SBC per article on Radius testnet while human readers stay free. Do not deploy anything.",
+    "context": "The user has a Next.js 15 app (middleware.ts) or an Astro app with a server adapter (src/middleware.ts) behind a CDN, and wants a gate that charges agents only.",
+    "expected_behavior": [
+        "Picks radiusPayments from radius-sdk/server in the framework's middleware (middleware.ts on Next 15, src/middleware.ts on Astro) rather than @x402/next, which needs Next 16.2.6 or later and has no MPP",
+        "Runs the payment gate only for agent requests (a bot User-Agent, a Signature-Agent header, a non-browser client, or a payment header) and lets human requests through unpaid, and says header and User-Agent checks can be spoofed",
+        "Prices HEAD next to GET, and on Next includes the page paths and /_next/data in the matcher and rebuilds the public URL from x-forwarded-host and x-forwarded-proto",
+        "On Astro, warns that prerendered pages are not gated, sets prerender = false on gated routes, and guards the middleware with context.isPrerendered (Astro 5) or a Host header check (Astro 4) so the build does not write the 402 into the static page",
+        "Charges only pages that exist, because middleware settles before the page renders and a paid 404 is still settled",
+        "Raises CDN caching: the gate must run before the cache, and paid responses must not carry Surrogate-Control or CDN-Cache-Control",
+        "Verifies with radius-cli sell check, including a -H 'User-Agent: GPTBot/1.1' run, and leaves deployment to a platform skill"
+    ],
+    "success_criteria": [
+        "Network is explicitly 'testnet', payTo comes from configuration, and the price is '$0.001' (1000 atomic units)",
+        "A browser User-Agent request is served the article with no 402",
+        "An agent request gets a 402 and a paying buyer gets the article",
+        "No claim is made about Piano, Zephr, Netlify, Vercel production or real CDN behavior as tested"
+    ]
+}

@@ -5,6 +5,7 @@ import { registerCall } from './commands/call.js';
 import { registerCode } from './commands/code.js';
 import { registerNonce } from './commands/nonce.js';
 import { registerReceipt } from './commands/receipt.js';
+import { registerSell } from './commands/sell.js';
 import { registerStorage } from './commands/storage.js';
 import { registerTx } from './commands/tx.js';
 import { registerWallet } from './commands/wallet.js';
@@ -32,6 +33,7 @@ registerReceipt(program);
 registerStorage(program);
 registerCode(program);
 registerNonce(program);
+registerSell(program);
 
 async function main(): Promise<void> {
   await program.parseAsync(process.argv);

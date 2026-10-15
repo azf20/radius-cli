@@ -1133,8 +1133,9 @@ setInterval(() => {
 
 ## x402 Facilitator Network
 
-> **For current SDK buyer and seller examples**, see the **x402** skill. Use
-> `radius-sdk/client` and `radius-sdk/hono` for application integrations.
+> **For current SDK examples**, see the **x402** skill (buyers) and the **sell-api**
+> skill (sellers). Use `radius-sdk/client`, `radius-sdk/server` and `radius-sdk/hono`
+> for application integrations.
 
 x402 is the HTTP-native payment protocol used for per-request API billing and micropayments. Facilitators handle on-chain settlement on behalf of clients. The Radius facilitator currently advertises v2 `exact` with Permit2; other facilitators and server offers can differ. Inspect `/supported` and the actual 402 challenge rather than selecting a signing method in advance.
 

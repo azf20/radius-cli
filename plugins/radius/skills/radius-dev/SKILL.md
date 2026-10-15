@@ -25,7 +25,7 @@ Use this Skill when the user asks for:
 ## Default stack decisions (opinionated)
 
 1) **TypeScript: radius-sdk for Radius payments and actions; viem for general EVM work**
-- Use `radius-sdk/hono` for Hono x402 seller middleware and `radius-sdk/client` for paying fetch, balances, ERC-20, Permit2, and transfer watching. Install the peer dependency for the entry point used (`hono` or `viem`).
+- Use `radius-sdk/server` / `radius-sdk/hono` for x402 sellers (see the **sell-api** skill) and `radius-sdk/client` for paying fetch, balances, ERC-20, Permit2, and transfer watching. Install the peer dependency for the entry point used (`hono` or `viem`).
 - Import network definitions, amounts, and receipt helpers from `radius-sdk`.
 - Use viem `createPublicClient` and `createWalletClient` for other contract reads and writes, with `radiusTestnet.chain` or `radiusMainnet.chain` from the SDK. Define a chain directly when an app cannot use the SDK.
 - `@radiustechsystems/sdk` is the deprecated package; it is distinct from `radius-sdk`.
@@ -199,7 +199,7 @@ Standard ERC-20 interactions, storage operations, and events work unchanged.
 - **TypeScript/scripts layer** — Backend scripts, server-side verification, event monitoring
 - **Smart contract layer** — Solidity contracts, deployment, testing
 - **Micropayment layer** — Pay-per-visit, API metering, streaming payments
-- **x402 layer** — HTTP-native micropayments, facilitator integration (see the **x402** skill for full implementation details)
+- **x402 layer** — HTTP-native micropayments, facilitator integration (see the **x402** skill for buyers and the protocol, **sell-api** for sellers)
 
 ### 2. Pick the right building blocks
 - UI: wagmi + Radius chain via `defineChain` + React hooks
@@ -207,7 +207,7 @@ Standard ERC-20 interactions, storage operations, and events work unchanged.
 - Smart contracts: Foundry (`forge` / `cast`) + OpenZeppelin
 - Agent wallet and terminal execution: `radius-cli`
 - Micropayments: `radius-sdk/hono` and `radius-sdk/client` for x402; viem for direct on-chain patterns
-- x402: use the SDK's buyer and seller APIs; see the **x402** skill for implementation details
+- x402: use the SDK's buyer and seller APIs; see the **x402** skill (buyers) and the **sell-api** skill (sellers)
 
 ### 3. Implement with Radius-specific correctness
 Always be explicit about:

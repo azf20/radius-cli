@@ -1,6 +1,6 @@
 {
     "name": "x402 Testnet Integration with Radius Facilitator",
-    "skills": ["x402"],
+    "skills": ["x402", "sell-api"],
     "query": "Set up x402 payment gating on Radius testnet for my API. I have a fresh wallet that's never made an x402 payment before. Use the Radius testnet facilitator.",
     "context": "User is building on Radius testnet (chain ID 72344). Their wallet has testnet SBC but has never interacted with Permit2. They want to gate an endpoint at 0.001 SBC per request and also write a client script to test it.",
     "expected_behavior": [

@@ -1,4 +1,5 @@
-// Reference one-shot integration (Hono): what a coding agent should produce from PROMPT.md.
+// Reference one-shot integration (Hono): what a coding agent should produce from the task in
+// plugins/radius/evals/sell-oneshot/prompt.md.
 import { createServer } from 'node:http';
 import { Hono } from 'hono';
 import { radiusPayments } from 'radius-sdk/hono';

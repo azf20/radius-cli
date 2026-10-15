@@ -88,6 +88,27 @@ The paid retry is never replayed across a cross-origin redirect.
 
 Body goes to stdout; payment confirmation and (optionally, with `--include`) headers go to stderr — pipeable.
 
+## Check a seller (`sell check`)
+
+Check your own paid endpoint before buyers see it. `sell check` requests the URL without paying and audits the `402` with [`radius-sdk`](../sdk): the x402 `PAYMENT-REQUIRED` challenge (decoded with `@x402/core`, as the SDK does) and any MPP `WWW-Authenticate: Payment` challenge. Like the SDK buyer, it also reads an x402 challenge from a JSON body when there is no `PAYMENT-REQUIRED` header (v1 sellers); a malformed offer is reported as a failed check, not a crash.
+
+```bash
+radius-cli sell check http://127.0.0.1:3000/api/report
+radius-cli sell check http://127.0.0.1:3000/api/report --price '$0.001' --probe-head
+radius-cli sell check https://api.example.com/query -X post -d '{"q":1}' --facilitator https://facilitator.example
+radius-cli --json sell check http://127.0.0.1:3000/api/report          # one JSON report on stdout
+RADIUS_HOME=.radius radius-cli sell check https://api.example.com/r --pay --threshold 0.01
+```
+
+For each x402 offer it checks that the network is a known preset, the asset is that network's payment asset (or `--sbc` on Radius) with the matching EIP-712 domain, the amount is an atomic integer (equal to `--price` converted with the asset's decimals, which catches 18-decimal mistakes; without `--price`, a price above 1000 per request is a warning), `payTo` is a non-zero address, `resource.url` is the requested URL, and `maxTimeoutSeconds` is a sensible positive integer. It then reads the facilitator's `/supported` (the network's default facilitator, or every `--facilitator <url>` given, with `RADIUS_FACILITATOR_API_KEY` sent as `x-api-key`) and checks that it lists each offer's scheme, network and transfer method. MPP challenges are checked for network, currency, decimals, amount, recipient and expiry, and whether they mirror an x402 offer; a seller without MPP is reported as `info`. Finally it asks the SDK buyer (`createRadiusFetch`, with a throwaway key that never signs) whether it would select the offer.
+
+- `-X, --method <verb>`, `-H`, `-d`: the request, as for `wallet pay` (default `GET`).
+- `--probe-head`: also send an unpaid `HEAD` and warn when it answers `2xx` (routers serve `HEAD` with the `GET` handler, which x402 routes keyed `GET` do not charge).
+- `--pay --threshold <decimal>`: when every check passed, make one paid request from the local wallet (`RADIUS_HOME` applies) and check that a receipt comes back. It pays on testnet unless `--network mainnet` is passed explicitly; `RADIUS_NETWORK` and the config file do not switch it to mainnet. `--networks` works as for `wallet pay`.
+- `--timeout <ms>`: per request, default 15000. The paid request of `--pay` gets four times that (at least 60 s), since the seller settles before it answers; if it still fails after the payment was sent, the message says the payment may have settled.
+
+Each check prints as `ok`, `warn`, `FAIL`, `skip` or `info`. Exit code `0` means no check failed (warnings allowed), `1` that one did, `2` invalid flags (a malformed `-H`, an unreadable `-d @file`, an unknown `--network`/`--networks`, a bad `--price` or `--threshold`).
+
 ## Read commands
 
 ```bash
@@ -149,6 +170,7 @@ Per-command JSON shapes:
 | `wallet balance` | `{address, totalUsd, sbc, rusd, sbcWei, rusdWei, aggregateWei, rusdSource, sbcError}` |
 | `wallet send` | `{hash, receipt?}` (no `receipt` with `--no-wait`) |
 | `wallet pay` | `{status, headers, body, bodyEncoding, payment}` (`payment.network` is the CAIP-2 network paid on) |
+| `sell check` | `{url, method, ok, status, x402Version, resource, offers, mpp, facilitators, payment?, checks: [{id, status, message}], summary}` (exit 1 when `ok` is false) |
 | `call` | decoded return value (single value or array) |
 | `tx` | the full transaction object |
 | `receipt` | the full receipt object |
@@ -163,7 +185,7 @@ Errors continue to go to stderr as `error: <message>` with a non-zero exit code;
 In priority order (highest first):
 
 1. **CLI flag** — `--network`, `--rpc-url`, `--private-key`, `--sbc`, `--rusd`, `--json`
-2. **Environment** — `RADIUS_NETWORK`, `RADIUS_RPC_URL`, `RADIUS_SBC_ADDRESS`, `RADIUS_RUSD_ADDRESS`, `RADIUS_PAY_NETWORKS`, `RADIUS_BASE_RPC_URL`, `RADIUS_BASE_SEPOLIA_RPC_URL`, `RADIUS_PASSWORD`, `RADIUS_KEYSTORE_PATH`, `RADIUS_HOME`
+2. **Environment** — `RADIUS_NETWORK`, `RADIUS_RPC_URL`, `RADIUS_SBC_ADDRESS`, `RADIUS_RUSD_ADDRESS`, `RADIUS_PAY_NETWORKS`, `RADIUS_BASE_RPC_URL`, `RADIUS_BASE_SEPOLIA_RPC_URL`, `RADIUS_FACILITATOR_API_KEY` (`sell check`), `RADIUS_PASSWORD`, `RADIUS_KEYSTORE_PATH`, `RADIUS_HOME`
 3. **`~/.radius/config.json`** — fields: `network`, `rpcUrl`, `sbcAddress`, `rusdAddress`, `payNetworks` (e.g. `["radius", "base"]`), `rpcUrls` (`{ "base": …, "base-sepolia": … }`)
 4. **Built-in defaults** — mainnet
 
