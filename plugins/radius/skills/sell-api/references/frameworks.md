@@ -284,51 +284,24 @@ export default {
 
 For an origin in any language (Python, Go, …) that you deploy next to, without Cloudflare. Paid routes are gated; every other path, including discovery and auth, passes through free. Run by hand (Node 22.22, `@hono/node-server` 2.1, mock facilitator): unpaid 402, paid `POST` 200 with the body forwarded, free routes untouched. Not in the eval.
 
+Build the app as in [Hono](#hono-radius-sdkhono) above (`app.use(radiusPayments({ network, payTo, routes }))`, `HEAD` priced next to each paid `GET`), serve it with `serve({ fetch: app.fetch })` from `@hono/node-server`, and register one pass-through after the middleware. Only the pass-through is Node-specific:
+
 ```typescript
-// server.ts
-import { Hono } from 'hono';
-import { serve } from '@hono/node-server';
-import { radiusPayments } from 'radius-sdk/hono';
-
-const ORIGIN_URL = process.env.ORIGIN_URL!;                     // e.g. http://127.0.0.1:8000
-const app = new Hono();
-
-app.use(radiusPayments({
-  network: 'testnet',
-  payTo: process.env.PAY_TO as `0x${string}`,
-  routes: {
-    'POST /v1/score': { price: '$0.01', description: 'One score' },
-    'GET /v1/reports/*': '$0.001',
-    'HEAD /v1/reports/*': '$0.001',
-  },
-}));
-
 app.all('/*', async (c) => {                                    // paid (after settlement) and free requests
   const req = c.req.raw;
   const url = new URL(req.url);
   const headers = new Headers(req.headers);
   headers.delete('host');
   headers.set('accept-encoding', 'identity');                  // Node's fetch decodes gzip but keeps Content-Encoding
-  headers.delete('payment-signature');                         // do not forward payment credentials
+  headers.delete('payment-signature');                         // as in the Worker's toOrigin above
   if (/^payment\s/i.test(headers.get('authorization') ?? '')) headers.delete('authorization');
-  const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await req.arrayBuffer();   // buffered: gotchas item 17
-  const res = await fetch(ORIGIN_URL + url.pathname + url.search, { method: req.method, headers, body, redirect: 'manual' });
-  return new Response(res.body, { status: res.status, headers: new Headers(res.headers) });   // mutable headers: gotchas item 17
+  const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await req.arrayBuffer();   // gotchas item 17
+  const res = await fetch(process.env.ORIGIN_URL + url.pathname + url.search, { method: req.method, headers, body, redirect: 'manual' });
+  return new Response(res.body, { status: res.status, headers: new Headers(res.headers) });   // radius-sdk 0.5.0: gotchas item 17
 });
-
-serve({ fetch: app.fetch, port: Number(process.env.PORT ?? 3000) });
 ```
 
-```dockerfile
-FROM node:22-slim
-WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
-COPY server.ts ./
-CMD ["node", "server.ts"]
-```
-
-`node server.ts` runs TypeScript directly on Node 22.18 or later (set `"type": "module"` in `package.json`).
+A Dockerfile needs only `FROM node:22-slim`, `npm ci --omit=dev` and `CMD ["node", "server.ts"]`: Node 22.18 or later runs TypeScript directly (set `"type": "module"` in `package.json`).
 
 ## In front of an origin: Fastly Compute
 
