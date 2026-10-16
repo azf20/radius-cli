@@ -44,7 +44,7 @@ In Claude Code, install from this repository:
 
 The plugin is `radius`, and the marketplace is `tools`. Existing installations
 of `radius-dev@radius-cli` need a one-time migration; see the
-[migration commands](docs/repository-migration.md#claude-plugin-name-migration).
+[migration commands](packages/docs/docs/pages/build/coding-assistants.mdx#claude-code).
 
 For Codex, run this in your application directory:
 
@@ -135,5 +135,4 @@ packages skips publishing and the dependent docs deployment.
 
 `pnpm pack`/tarball publishing in CI does not run `prepublishOnly`, which is why
 the release workflow builds and tests explicitly and relies on Changesets'
-dependency ordering. See the [repository migration checks](docs/repository-migration.md)
-for install checks, npm configuration after a rename, and release evidence.
+dependency ordering.

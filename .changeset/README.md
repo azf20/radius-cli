@@ -24,4 +24,4 @@ never versioned.
 If publishing fails, correct the cause and re-run the failed jobs in the existing Release workflow.
 Use its npm Trusted Publishing connection rather than a local publish or an npm token. A failure
 after successful publication needs only the failed follow-up work; do not bump versions to retry
-docs deployment. See the root README and [repository migration checks](../docs/repository-migration.md).
+docs deployment. See the [root README](../README.md#releasing) for setup and recovery.

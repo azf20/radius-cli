@@ -38,7 +38,7 @@ claude plugin install radius@tools
 
 The plugin is `radius`, and the marketplace is `tools`. Plugin 0.2.0 replaces
 the older `radius-dev@radius-cli` install identity. Follow the
-[one-time migration commands](../../docs/repository-migration.md#claude-plugin-name-migration)
+[one-time migration commands](../../packages/docs/docs/pages/build/coding-assistants.mdx#claude-code)
 if it is already installed. Individual skill names stay the same; Claude's
 plugin prefix becomes `radius`, for example `/radius:sell-api`.
 
