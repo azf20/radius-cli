@@ -18,8 +18,6 @@ interface FileConfig {
   passwordless?: boolean;
   /** Networks `wallet pay` pays on, in preference order (default ['radius']). */
   payNetworks?: string[];
-  /** Redirects `wallet pay` follows before paying (default 1; 0 follows none). */
-  maxRedirects?: number;
   /** RPC URLs for non-Radius networks, by preset id: { "base": "https://…", "base-sepolia": "https://…" }. */
   rpcUrls?: { base?: string; 'base-sepolia'?: string };
 }
@@ -94,24 +92,6 @@ export function resolvePayNetworks(cfg: ResolvedConfig, flag?: string): PaymentN
     }
     throw new Error(`--networks: unknown network '${name}' (use ${PAY_NETWORKS.join(', ')})`);
   });
-}
-
-/** Redirects `wallet pay` follows before paying unless told otherwise (the SDK's own default is fetch's 20). */
-export const DEFAULT_PAY_MAX_REDIRECTS = 1;
-
-/**
- * Redirects `wallet pay` follows before paying: `--max-redirects`, else RADIUS_MAX_REDIRECTS, else
- * `maxRedirects` in the config file, else 1. 0 follows none.
- */
-export function resolveMaxRedirects(flag?: string): number {
-  const file = readFileConfig();
-  const [raw, source] =
-    flag !== undefined ? [flag, '--max-redirects']
-    : process.env.RADIUS_MAX_REDIRECTS ? [process.env.RADIUS_MAX_REDIRECTS, 'RADIUS_MAX_REDIRECTS']
-    : file.maxRedirects !== undefined ? [String(file.maxRedirects), 'maxRedirects in the config file']
-    : [String(DEFAULT_PAY_MAX_REDIRECTS), 'default'];
-  if (!/^\d+$/.test(raw.trim())) throw new Error(`${source} must be a non-negative integer (got '${raw}')`);
-  return Number(raw);
 }
 
 export function configPath(): string {

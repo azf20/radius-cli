@@ -88,7 +88,7 @@ Payments are made on Radius in SBC by default. `--networks radius,base` (or `RAD
 
 Permit2 payments need an ERC-20 approval for the canonical Permit2 contract. When the server declares `eip2612GasSponsoring` (the Radius facilitator does), the CLI signs an EIP-2612 permit alongside the payment and no on-chain approval transaction is ever sent — a wallet holding only SBC can pay. Otherwise pass `--approve-permit2` (or `-y`) to submit a one-time unlimited approval automatically (gas in SBC on Radius, ETH on Base); without it the CLI prompts (or refuses with no TTY). `--approve-permit2` grants the approval whenever the allowance is short, sponsored or not, which is the way out when a facilitator answers 412. Each payment is still individually authorized by a signed Permit2 message capped to that payment's amount.
 
-Redirects are followed before paying, so an endpoint that answers `302` with a redirect to a `402` is paid at the final URL, not at the redirector. `--max-redirects <n>` (or `RADIUS_MAX_REDIRECTS`, or `maxRedirects` in the config file) sets how many to follow: 1 by default, 0 to follow none (the redirect is printed like any other response). A longer chain fails with `too many redirects` and exit 1, and a redirect with no `Location` header or to a scheme other than http(s) fails the same way. Method and body follow the fetch standard: `307` and `308` repeat the request unchanged; `303`, and `POST` on `301` and `302`, become a `GET` with no body. `Authorization`, `Cookie` and payment headers are dropped when a redirect leaves the origin. The price cap, `--threshold` and the prompt see the final URL's offer. The paid retry itself is never redirected: it is never replayed across a cross-origin redirect.
+Redirects are followed before paying, so an endpoint that `302`s to a `402` is paid at the final URL, and the price cap, `--threshold` and prompt apply to that URL's offer. `--max-redirects <n>` sets how many to follow (default 1; `0` follows none); a longer chain fails with an error naming the flag. Method and body follow fetch (`303`, and `POST` on `301`/`302`, become a `GET`), and `Authorization` and `Cookie` are dropped on a cross-origin redirect. The paid retry is never redirected or replayed across a cross-origin redirect.
 
 Body goes to stdout; payment confirmation and (optionally, with `--include`) headers go to stderr — pipeable.
 
@@ -193,8 +193,8 @@ Errors continue to go to stderr as `error: <message>` with a non-zero exit code;
 In priority order (highest first):
 
 1. **CLI flag** — `--network`, `--rpc-url`, `--private-key`, `--sbc`, `--rusd`, `--json`
-2. **Environment** — `RADIUS_NETWORK`, `RADIUS_RPC_URL`, `RADIUS_SBC_ADDRESS`, `RADIUS_RUSD_ADDRESS`, `RADIUS_PAY_NETWORKS`, `RADIUS_MAX_REDIRECTS`, `RADIUS_BASE_RPC_URL`, `RADIUS_BASE_SEPOLIA_RPC_URL`, `RADIUS_FACILITATOR_API_KEY` (`sell check`), `RADIUS_PASSWORD`, `RADIUS_KEYSTORE_PATH`, `RADIUS_HOME`
-3. **`~/.radius/config.json`** — fields: `network`, `rpcUrl`, `sbcAddress`, `rusdAddress`, `payNetworks` (e.g. `["radius", "base"]`), `maxRedirects`, `rpcUrls` (`{ "base": …, "base-sepolia": … }`)
+2. **Environment** — `RADIUS_NETWORK`, `RADIUS_RPC_URL`, `RADIUS_SBC_ADDRESS`, `RADIUS_RUSD_ADDRESS`, `RADIUS_PAY_NETWORKS`, `RADIUS_BASE_RPC_URL`, `RADIUS_BASE_SEPOLIA_RPC_URL`, `RADIUS_FACILITATOR_API_KEY` (`sell check`), `RADIUS_PASSWORD`, `RADIUS_KEYSTORE_PATH`, `RADIUS_HOME`
+3. **`~/.radius/config.json`** — fields: `network`, `rpcUrl`, `sbcAddress`, `rusdAddress`, `payNetworks` (e.g. `["radius", "base"]`), `rpcUrls` (`{ "base": …, "base-sepolia": … }`)
 4. **Built-in defaults** — mainnet
 
 SBC defaults to `0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb`, its address on both mainnet and testnet (taken from `radius-sdk`); set `--sbc` / `RADIUS_SBC_ADDRESS` / `sbcAddress` only for another deployment.

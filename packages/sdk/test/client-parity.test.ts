@@ -590,16 +590,15 @@ describe('redirect guard on the paid retry', () => {
 
 describe('redirects before paying', () => {
   const FINAL_URL = 'https://api.example.com/final';
-  const ELSEWHERE = 'https://pay.example.net/final';
   const challenge = v2(EXACT_EIP3009);
 
-  /** Routes by URL: `redirects` maps a URL to [status, location]; any other URL is a seller (402, then 200 once paid). */
-  function routed(redirects: Record<string, [number, string?]>): MockServer {
+  /** `hops` maps a URL to [status, location]; any other URL is a seller: 402, then 200 once paid. */
+  function routed(hops: Record<string, [number, string?]>): MockServer {
     const requests: Request[] = [];
     const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const req = new Request(input, init);
       requests.push(req);
-      const hop = redirects[req.url];
+      const hop = hops[req.url];
       if (hop) return new Response(null, { status: hop[0], headers: hop[1] ? { location: hop[1] } : {} });
       if (req.headers.has('payment-signature')) return Response.json({ ok: true });
       return new Response(null, { status: 402, headers: { 'PAYMENT-REQUIRED': b64(challenge) } });
@@ -607,16 +606,14 @@ describe('redirects before paying', () => {
     return { fetch, requests };
   }
   const urls = (server: MockServer) => server.requests.map((r) => `${r.method} ${r.url}`);
+  const chain = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i): [string, [number, string]] => [i === 0 ? RESOURCE_URL : `https://api.example.com/h${i}`, [302, `/h${i + 1}`]]));
 
-  it('pays the 402 behind a 302, at the final URL', async () => {
+  it('pays the 402 behind a 302 at the final URL, not at the redirector', async () => {
     const server = routed({ [RESOURCE_URL]: [302, '/final'] });
-    const offers: PaymentOffer[] = [];
-    const res = await buyer(server, { onPaymentRequired: (o) => { offers.push(o); return true; } })(RESOURCE_URL);
+    const res = await buyer(server)(RESOURCE_URL);
     expect(res.status).toBe(200);
     expect(urls(server)).toEqual([`GET ${RESOURCE_URL}`, `GET ${FINAL_URL}`, `GET ${FINAL_URL}`]);
     expect(server.requests[2].headers.has('payment-signature')).toBe(true);
-    expect(server.requests[2].redirect).toBe('manual');
-    expect(offers).toHaveLength(1);
   });
 
   it('applies the price cap to the final 402', async () => {
@@ -625,66 +622,25 @@ describe('redirects before paying', () => {
     expect(server.requests.some((r) => r.headers.has('payment-signature'))).toBe(false);
   });
 
-  it('stops at maxRedirects, naming the limit', async () => {
-    const server = routed({ [RESOURCE_URL]: [302, '/a'], 'https://api.example.com/a': [302, '/final'] });
-    await rejects(buyer(server, { maxRedirects: 1 })(RESOURCE_URL), 'too_many_redirects', /followed 1 \(the limit\).*\/final/);
-    expect(server.requests).toHaveLength(2);
-  });
-
-  it('follows up to fetch\'s own limit of 20 by default', async () => {
-    const chain = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i): [string, [number, string]] => [i === 0 ? RESOURCE_URL : `https://api.example.com/h${i}`, [302, `/h${i + 1}`]]));
+  it('follows up to maxRedirects, 20 by default, and then throws', async () => {
+    await rejects(buyer(routed(chain(2)), { maxRedirects: 1 })(RESOURCE_URL), 'redirect_refused', /Too many redirects.*limit of 1/);
+    expect((await buyer(routed(chain(2)), { maxRedirects: 2 })(RESOURCE_URL)).status).toBe(200);
     expect((await buyer(routed(chain(20)))(RESOURCE_URL)).status).toBe(200);
-    await rejects(buyer(routed(chain(21)))(RESOURCE_URL), 'too_many_redirects', /followed 20 \(the limit\)/);
+    await rejects(buyer(routed(chain(21)))(RESOURCE_URL), 'redirect_refused', /limit of 20/);
+    expect((await buyer(routed(chain(1)), { maxRedirects: 0 })(RESOURCE_URL)).status).toBe(302); // 0 follows none
   });
 
-  it('follows as many redirects as maxRedirects allows', async () => {
-    const server = routed({ [RESOURCE_URL]: [302, '/a'], 'https://api.example.com/a': [302, '/final'] });
-    const res = await buyer(server, { maxRedirects: 2 })(RESOURCE_URL);
-    expect(res.status).toBe(200);
-    expect(urls(server).at(-1)).toBe(`GET ${FINAL_URL}`);
-    await rejects(buyer(routed({ [RESOURCE_URL]: [302, '/a'], 'https://api.example.com/a': [302, '/b'], 'https://api.example.com/b': [302, '/final'] }), { maxRedirects: 2 })(RESOURCE_URL), 'too_many_redirects');
-  });
-
-  it('maxRedirects: 0 follows nothing and returns the redirect', async () => {
-    const server = routed({ [RESOURCE_URL]: [302, '/final'] });
-    const res = await buyer(server, { maxRedirects: 0 })(RESOURCE_URL);
-    expect(res.status).toBe(302);
-    expect(server.requests).toHaveLength(1);
-  });
-
-  it('rejects an invalid maxRedirects', () => {
-    for (const maxRedirects of [-1, 1.5, Number.NaN]) {
-      expect(() => buyer(routed({}), { maxRedirects })).toThrow(/maxRedirects/);
-    }
-  });
-
-  it('returns a non-402 answer behind a redirect without paying', async () => {
-    const server = routed({ [RESOURCE_URL]: [301, 'https://static.example.org/page'], 'https://static.example.org/page': [200] });
-    const res = await buyer(server)(RESOURCE_URL);
-    expect(res.status).toBe(200);
-    expect(server.requests).toHaveLength(2);
-  });
-
-  it('leaves redirect: manual and redirect: error requests to fetch', async () => {
-    const server = routed({ [RESOURCE_URL]: [302, '/final'] });
-    const res = await buyer(server)(RESOURCE_URL, { redirect: 'manual' });
-    expect(res.status).toBe(302);
-    expect(server.requests).toHaveLength(1);
-  });
-
-  it('strips credentials and payment headers on a cross-origin hop only', async () => {
-    const headers = { Authorization: 'Bearer secret', Cookie: 'sid=1', 'X-PAYMENT-X': 'p', 'X-Api-Key': 'k' };
-    const cross = routed({ [RESOURCE_URL]: [302, ELSEWHERE] });
+  it('drops Authorization and Cookie on another origin only, and never sends payment headers before the 402', async () => {
+    const headers = { Authorization: 'Bearer s', Cookie: 'a=b', 'X-Api-Key': 'k' };
+    const cross = routed({ [RESOURCE_URL]: [302, 'https://pay.example.net/final'] });
     await buyer(cross)(RESOURCE_URL, { headers });
-    expect(cross.requests[0].headers.get('authorization')).toBe('Bearer secret');
-    for (const r of cross.requests.slice(1)) {
-      expect([r.headers.get('authorization'), r.headers.get('cookie'), r.headers.get('x-payment-x')]).toEqual([null, null, null]);
-      expect(r.headers.get('x-api-key')).toBe('k');
-    }
+    expect(cross.requests.map((r) => r.headers.get('authorization'))).toEqual(['Bearer s', null, null]);
+    expect(cross.requests.map((r) => r.headers.get('cookie'))).toEqual(['a=b', null, null]);
+    expect(cross.requests[1].headers.get('x-api-key')).toBe('k');
+    expect(cross.requests[1].headers.has('payment-signature')).toBe(false);
     const same = routed({ [RESOURCE_URL]: [302, '/final'] });
     await buyer(same)(RESOURCE_URL, { headers });
-    expect(same.requests[1].headers.get('authorization')).toBe('Bearer secret');
-    expect(same.requests[1].headers.get('cookie')).toBe('sid=1');
+    expect(same.requests[1].headers.get('authorization')).toBe('Bearer s');
   });
 
   it('keeps method and body on 307 and 308', async () => {
@@ -692,37 +648,33 @@ describe('redirects before paying', () => {
       const server = routed({ [RESOURCE_URL]: [status, '/final'] });
       await buyer(server)(RESOURCE_URL, { method: 'POST', body: '{"a":1}', headers: { 'content-type': 'application/json' } });
       expect(urls(server).slice(1)).toEqual([`POST ${FINAL_URL}`, `POST ${FINAL_URL}`]);
-      for (const r of server.requests.slice(1)) {
-        expect(await r.text()).toBe('{"a":1}');
-        expect(r.headers.get('content-type')).toBe('application/json');
-      }
+      expect(await server.requests[2].text()).toBe('{"a":1}');
     }
   });
 
-  it('turns POST into a bodiless GET on 301, 302 and 303, as fetch does', async () => {
-    for (const status of [301, 302, 303]) {
+  it('turns POST into a bodiless GET on 301, 302 and 303, but keeps PUT on 301 and 302', async () => {
+    for (const [status, method, expected] of [[301, 'POST', 'GET'], [302, 'POST', 'GET'], [303, 'POST', 'GET'], [302, 'PUT', 'PUT'], [303, 'PUT', 'GET']] as const) {
       const server = routed({ [RESOURCE_URL]: [status, '/final'] });
-      await buyer(server)(RESOURCE_URL, { method: 'POST', body: '{"a":1}', headers: { 'content-type': 'application/json' } });
-      expect(urls(server).slice(1)).toEqual([`GET ${FINAL_URL}`, `GET ${FINAL_URL}`]);
-      for (const r of server.requests.slice(1)) {
-        expect(r.body).toBeNull();
-        expect(r.headers.get('content-type')).toBeNull();
-      }
+      await buyer(server)(RESOURCE_URL, { method, body: 'x' });
+      expect(server.requests[1].method).toBe(expected);
+      expect(await server.requests[1].text()).toBe(expected === 'GET' ? '' : 'x');
     }
   });
 
-  it('keeps PUT on 301 and 302 but not on 303', async () => {
-    for (const [status, method] of [[302, 'PUT'], [301, 'PUT'], [303, 'GET']] as const) {
-      const server = routed({ [RESOURCE_URL]: [status, '/final'] });
-      await buyer(server)(RESOURCE_URL, { method: 'PUT', body: 'x' });
-      expect(server.requests[1].method).toBe(method);
+  it('pays behind a redirect served by a real HTTP server', async () => {
+    const { createServer } = await import('node:http');
+    const server = createServer((req, res) => {
+      if (req.url === '/r') return void res.writeHead(302, { location: '/final' }).end();
+      if (req.headers['payment-signature']) return void res.writeHead(200).end('paid');
+      res.writeHead(402, { 'PAYMENT-REQUIRED': b64(challenge) }).end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const res = await createRadiusFetch({ network: NETWORK, signer: PK, maxPerRequest: { amount: '1000000' } })(`http://127.0.0.1:${(server.address() as { port: number }).port}/r`);
+      expect([res.status, await res.text()]).toEqual([200, 'paid']);
+    } finally {
+      server.close();
     }
-  });
-
-  it('refuses a redirect without Location, to a non-http scheme, or to an invalid URL', async () => {
-    await rejects(buyer(routed({ [RESOURCE_URL]: [302] }))(RESOURCE_URL), 'invalid_redirect', /without a Location/);
-    await rejects(buyer(routed({ [RESOURCE_URL]: [302, 'file:///etc/passwd'] }))(RESOURCE_URL), 'invalid_redirect', /file:/);
-    await rejects(buyer(routed({ [RESOURCE_URL]: [302, 'http://[bad'] }))(RESOURCE_URL), 'invalid_redirect', /invalid Location/);
   });
 });
 

@@ -54,11 +54,7 @@ export function parseHeaderArgs(headerArgs: string[] | undefined): Headers {
   return out;
 }
 
-/**
- * Send the request, following up to `maxRedirects` redirects (see `followRedirects` in radius-sdk).
- * `request` is the one that produced the response: the final hop, body intact, ready to be paid
- * if the response is a 402.
- */
+/** Send the request, following up to `maxRedirects` redirects. `request` is the one that drew the response (the final hop). */
 export async function runRequest(
   verb: HttpVerb,
   url: string,

@@ -9,8 +9,6 @@ export type RadiusPaymentErrorCode =
   | 'payment_rejected'
   | 'invalid_receipt'
   | 'redirect_refused'
-  | 'invalid_redirect'
-  | 'too_many_redirects'
   | 'settle_failed'
   | 'facilitator_unreachable'
   | 'unsupported_transfer_method'
