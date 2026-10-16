@@ -805,10 +805,17 @@ export function createRadiusFetch(options: RadiusFetchOptions): RadiusFetch {
     let retry = new Request(request.clone(), { redirect: 'manual' });
     const first = await baseFetch(request);
     if (first.status !== 402) return first;
-    // fetch followed any redirects: pay the URL that answered 402, not the redirector. The retry
-    // repeats our method and body (fetch does not say whether a 301/302/303 turned a POST into a GET),
-    // and, like fetch, leaves Authorization and Cookie behind on another origin.
+    // fetch followed redirects before the 402: pay the URL that answered it, not the redirector, like
+    // fetch leaving Authorization and Cookie behind on another origin. Only GET and HEAD: after a 301,
+    // 302 or 303 the 402 was answered to a GET, and a request body must not go to a URL that never saw it.
     if (first.redirected && first.url) {
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        throw new RadiusPaymentError(
+          'redirect_refused',
+          `Not paying: ${request.method} ${request.url} was redirected to ${first.url} before the 402. After a redirect only GET and HEAD are paid: a 301, 302 or 303 answers the 402 to a GET, and a request body must not be sent to a URL that never saw it`,
+          { status: first.status, url: first.url },
+        );
+      }
       retry = new Request(first.url, retry);
       if (!sameOrigin(new URL(retry.url), new URL(request.url))) ['authorization', 'cookie'].forEach((h) => retry.headers.delete(h));
     }
@@ -818,6 +825,7 @@ export function createRadiusFetch(options: RadiusFetchOptions): RadiusFetch {
       throw new RadiusPaymentError('declined', `Payment of ${offer.amountFormatted} to ${offer.payTo} declined`, offer);
     }
 
+    const unpaid = new Headers(retry.headers); // what a redirect after payment may carry on: no payment headers
     if (offer.protocol === 'x402') {
       await ensureAllowance(offer);
       // Narrow the challenge to the chosen offer so the upstream selector cannot pick another.
@@ -834,23 +842,19 @@ export function createRadiusFetch(options: RadiusFetchOptions): RadiusFetch {
     retry.headers.set('Access-Control-Expose-Headers', 'PAYMENT-RESPONSE,X-PAYMENT-RESPONSE,Payment-Receipt');
 
     const second = await baseFetch(retry);
-    if (REDIRECT_STATUSES.has(second.status)) {
-      const location = second.headers.get('location');
-      let target: URL | undefined;
-      try {
-        target = location ? new URL(location, retry.url) : undefined;
-      } catch {
-        /* malformed Location: refused below */
+    const location = REDIRECT_STATUSES.has(second.status) ? second.headers.get('location') : null;
+    if (location) {
+      // The seller redirects after paying (say, to the content with a token); the receipt is on this response.
+      await second.body?.cancel();
+      const next = new URL(location, retry.url);
+      if (!sameOrigin(next, new URL(retry.url))) ['authorization', 'cookie'].forEach((h) => unpaid.delete(h));
+      const followed = await baseFetch(new Request(next, { method: retry.method, headers: unpaid, signal: retry.signal }));
+      const headers = new Headers(followed.headers);
+      for (const h of ['payment-response', 'x-payment-response', MPP_RECEIPT_HEADER]) {
+        const v = second.headers.get(h);
+        if (v) headers.set(h, v);
       }
-      if (!target || !sameOrigin(target, new URL(retry.url))) {
-        throw new RadiusPaymentError(
-          'redirect_refused',
-          `Server redirected the paid request to ${location ?? '(no Location)'}; refusing to replay the payment header across origins`,
-          { status: second.status, location },
-        );
-      }
-      // Same-origin: handed back unfollowed. Re-requesting the target is the caller's call (it may cost another payment).
-      return second;
+      return settled(second, new Response(followed.body, { status: followed.status, statusText: followed.statusText, headers }), offer);
     }
     if (second.status === 402) {
       // `details.response` is the server's answer, left unread for the caller to inspect; the reason
@@ -871,7 +875,12 @@ export function createRadiusFetch(options: RadiusFetchOptions): RadiusFetch {
       const details: PaymentRejectedDetails = { response: second, error, challenge };
       throw new RadiusPaymentError('payment_rejected', `Server rejected the payment (${error ?? 'no reason given'})`, details);
     }
-    const receipt = offer.protocol === 'x402' ? x402Receipt(second, offer) : mppReceipt(second, offer);
+    return settled(second, second, offer);
+  };
+
+  /** Report the receipt carried by `paid` (the response to the paid request) and return `result` to the caller. */
+  const settled = async (paid: Response, result: Response, offer: PaymentOffer): Promise<Response> => {
+    const receipt = offer.protocol === 'x402' ? x402Receipt(paid, offer) : mppReceipt(paid, offer);
     if (receipt && options.onPaid) {
       try {
         await options.onPaid(receipt, offer);
@@ -879,7 +888,7 @@ export function createRadiusFetch(options: RadiusFetchOptions): RadiusFetch {
         console.error('radius-sdk onPaid hook failed:', e);
       }
     }
-    return second;
+    return result;
   };
 
   const x402Receipt = (res: Response, offer: X402Offer): PaymentReceipt | undefined => {

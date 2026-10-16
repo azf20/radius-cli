@@ -1,6 +1,6 @@
 ---
-"radius-sdk": patch
-"radius-cli": patch
+"radius-sdk": minor
+"radius-cli": minor
 ---
 
-`createRadiusFetch` and `wallet pay` pay the 402 at the final URL when the first request was redirected, so an endpoint that answers `302` with a redirect to a `402` can be paid. The redirects are followed by `fetch` itself (its limit of 20, not configurable).
+`createRadiusFetch` and `wallet pay` handle redirects around a payment. A GET or HEAD whose 402 follows a redirect is paid at the final URL (fetch follows the redirect itself, up to its limit of 20); any other method throws `redirect_refused`. A redirect after payment is followed without the payment header, and the receipt is taken from its `PAYMENT-RESPONSE`.

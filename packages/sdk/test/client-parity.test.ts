@@ -10,7 +10,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { maxUint256, recoverTypedDataAddress, toHex, type Address, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { createRadiusFetch, RadiusPaymentError, type InvalidChallengeDetails, type PaymentOffer, type PaymentReceipt, type PaymentRejectedDetails, type RadiusFetchOptions } from '../src/client/index.js';
+import { createRadiusFetch, getPaymentReceipt, RadiusPaymentError, type InvalidChallengeDetails, type PaymentOffer, type PaymentReceipt, type PaymentRejectedDetails, type RadiusFetchOptions } from '../src/client/index.js';
 import { PERMIT2_ADDRESS, X402_EXACT_PERMIT2_PROXY, resolveNetwork } from '../src/networks.js';
 
 const PK = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d' as Hex;
@@ -550,44 +550,6 @@ describe('offer selection', () => {
   });
 });
 
-// -- redirect guard -----------------------------------------------------------------------------
-
-describe('redirect guard on the paid retry', () => {
-  const redirect = (location?: string, status = 302) => () => new Response(null, { status, headers: location ? { location } : {} });
-
-  it('refuses to replay the payment header across origins', async () => {
-    const server = seller(v2(EXACT_EIP3009), redirect('https://evil.example/collect'));
-    await rejects(buyer(server)(RESOURCE_URL), 'redirect_refused', /evil\.example/);
-    expect(server.requests).toHaveLength(2);
-  });
-
-  it('refuses a redirect to another scheme or port of the same host', async () => {
-    await rejects(buyer(seller(v2(EXACT_EIP3009), redirect('http://api.example.com/r')))(RESOURCE_URL), 'redirect_refused');
-    await rejects(buyer(seller(v2(EXACT_EIP3009), redirect('https://api.example.com:8443/r')))(RESOURCE_URL), 'redirect_refused');
-  });
-
-  it('refuses a redirect without a usable Location', async () => {
-    await rejects(buyer(seller(v2(EXACT_EIP3009), redirect(undefined)))(RESOURCE_URL), 'redirect_refused', /no Location/);
-    await rejects(buyer(seller(v2(EXACT_EIP3009), redirect('http://[bad')))(RESOURCE_URL), 'redirect_refused');
-  });
-
-  it('returns a same-origin redirect unfollowed', async () => {
-    for (const location of ['/next', 'https://api.example.com/next?x=1']) {
-      const server = seller(v2(EXACT_EIP3009), redirect(location, 307));
-      const res = await buyer(server)(RESOURCE_URL);
-      expect(res.status).toBe(307);
-      expect(res.headers.get('location')).toBe(location);
-      expect(server.requests).toHaveLength(2);
-      expect(server.requests[1].redirect).toBe('manual');
-    }
-  });
-
-  it('does not treat 304 as a redirect', async () => {
-    const res = await buyer(seller(v2(EXACT_EIP3009), () => new Response(null, { status: 304 })))(RESOURCE_URL);
-    expect(res.status).toBe(304);
-  });
-});
-
 // -- redirects before paying (real HTTP servers, so fetch itself follows them) -------------------
 
 describe('a 402 behind a redirect', () => {
@@ -636,11 +598,54 @@ describe('a 402 behind a redirect', () => {
     for (const r of shop.seen) expect([r.headers.authorization, r.headers.cookie, r.headers['x-api-key']]).toEqual([undefined, undefined, 'k']);
   });
 
-  it('keeps method and body through a 307', async () => {
-    const shop = await serve(paywall);
-    const short = await serve(redirector(307, `${shop.origin}/final`));
-    await payer()(`${short.origin}/r`, { method: 'POST', body: '{"a":1}' });
-    expect(shop.seen.map((r) => [r.method, r.body])).toEqual([['POST', '{"a":1}'], ['POST', '{"a":1}']]);
+  it('refuses to pay a redirected POST or PUT, and says why', async () => {
+    for (const status of [301, 302, 303, 307]) {
+      for (const method of ['POST', 'PUT']) {
+        const shop = await serve(paywall);
+        const short = await serve(redirector(status, `${shop.origin}/final`));
+        await rejects(payer()(`${short.origin}/r`, { method, body: '{"a":1}' }), 'redirect_refused', /only GET and HEAD are paid.*never saw it/);
+        expect(shop.seen.some((r) => r.headers['payment-signature'])).toBe(false);
+      }
+    }
+  });
+
+  it('pays a redirected HEAD and GET', async () => {
+    for (const method of ['HEAD', 'GET']) {
+      const shop = await serve(paywall);
+      const short = await serve(redirector(302, `${shop.origin}/final`));
+      expect((await payer()(`${short.origin}/r`, { method })).status).toBe(200);
+      expect(shop.seen.map((r) => [r.method, !!r.headers['payment-signature']])).toEqual([[method, false], [method, true]]);
+    }
+  });
+
+  /** A paywall that, once paid, redirects (with the receipt) to `content`, which wants the token and no payment header. */
+  const tokenShop = (contentOrigin: () => string) => async (req: Seen, res: ServerResponse) => {
+    const receipt = b64({ success: true, transaction: '0xabc', network: NETWORK_ID, payer: SIGNER.address });
+    if (req.url.startsWith('/content')) return void (req.url.endsWith('token=abc') ? res.writeHead(200).end('content') : res.writeHead(403).end());
+    if (req.headers['payment-signature']) return void res.writeHead(302, { location: `${contentOrigin()}/content?token=abc`, 'PAYMENT-RESPONSE': receipt }).end();
+    res.writeHead(402, { 'PAYMENT-REQUIRED': b64(v2(EXACT_EIP3009)) }).end();
+  };
+
+  it('follows a redirect after payment and takes the receipt from it', async () => {
+    const paid: PaymentReceipt[] = [];
+    let origin = '';
+    const shop = await serve(tokenShop(() => origin));
+    origin = shop.origin;
+    const res = await payer({ onPaid: (r) => void paid.push(r) })(`${shop.origin}/pay`, { headers: { 'X-Api-Key': 'k' } });
+    expect([res.status, await res.text()]).toEqual([200, 'content']);
+    expect(getPaymentReceipt(res)).toMatchObject({ success: true, transaction: '0xabc' });
+    expect(paid).toHaveLength(1);
+    const followUp = shop.seen.at(-1)!;
+    expect([followUp.url, followUp.headers['payment-signature'], followUp.headers['x-api-key']]).toEqual(['/content?token=abc', undefined, 'k']);
+  });
+
+  it('sends the follow-up to another origin without the payment header, Authorization or Cookie', async () => {
+    const cdn = await serve(tokenShop(() => ''));
+    const shop = await serve(tokenShop(() => cdn.origin));
+    const res = await payer()(`${shop.origin}/pay`, { headers: { Authorization: 'Bearer s', Cookie: 'a=b' } });
+    expect(await res.text()).toBe('content');
+    expect(cdn.seen).toHaveLength(1);
+    expect([cdn.seen[0].headers['payment-signature'], cdn.seen[0].headers.authorization, cdn.seen[0].headers.cookie]).toEqual([undefined, undefined, undefined]);
   });
 });
 

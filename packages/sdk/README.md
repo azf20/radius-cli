@@ -209,10 +209,14 @@ const receipt = getPaymentReceipt(res, payFetch.network);   // { success, transa
   `upto`, `offer.amount` and `maxPerRequest` are about the authorised maximum; the receipt carries
   the amount actually charged, which is validated against the signed maximum (`invalid_receipt`
   otherwise). The Radius facilitator does not advertise `upto` yet, so it is unit-tested only.
-- Redirects: `fetch` follows redirects on the first request (its limit of 20) and the 402 is paid at the final URL (`response.url`), with the price cap and `onPaymentRequired` applied to that offer; the retry repeats the original method and body there, and drops `Authorization` and `Cookie` on another origin. The paid retry is sent with `redirect: 'manual'`. A 3xx to another origin throws
-  `redirect_refused` without following (the payment header is never replayed elsewhere); a
-  same-origin 3xx is returned as-is, unfollowed, so you decide whether to re-request (and pay
-  again). In browsers this surfaces as an opaque redirect response (status 0).
+- Redirects: `fetch` follows them before the 402 (its limit of 20), and a GET or HEAD is paid at the final
+  URL (`response.url`), with the price cap and `onPaymentRequired` applied to that offer. Any other
+  method throws `redirect_refused`: after a 301, 302 or 303 the 402 was answered to a GET, and a request
+  body must not be sent to a URL that never saw it. The paid request is sent with `redirect: 'manual'`;
+  if the seller redirects after payment, the redirect is followed with a plain GET/HEAD that carries no
+  payment header (and no `Authorization` or `Cookie` on another origin), `onPaid` gets the receipt from
+  the redirect's `PAYMENT-RESPONSE`, and the final response carries that header. In browsers
+  `redirect: 'manual'` yields an opaque response (status 0), which cannot be followed.
 - Permit2 approval handled either way: when the server's facilitator sponsors it
   (`eip2612GasSponsoring`), a wallet holding only SBC pays without any on-chain transaction; when
   it does not, the SDK sends one unlimited approval from the signer (`permit2Approval: 'auto'`,
