@@ -805,17 +805,15 @@ export function createRadiusFetch(options: RadiusFetchOptions): RadiusFetch {
     let retry = new Request(request.clone(), { redirect: 'manual' });
     const first = await baseFetch(request);
     if (first.status !== 402) return first;
-    // fetch followed redirects before the 402: pay the URL that answered it, not the redirector, like
-    // fetch leaving Authorization and Cookie behind on another origin. Only GET and HEAD: after a 301,
-    // 302 or 303 the 402 was answered to a GET, and a request body must not go to a URL that never saw it.
+    // fetch followed redirects before the 402. We pay at the URL that answered it, not the redirector,
+    // and replay the ORIGINAL method and body there (leaving Authorization and Cookie behind on another
+    // origin, as fetch does). This matches @x402/fetch and @x402/axios, whose paid retry is a copy of the
+    // original request; the x402 spec says nothing about redirects or methods.
+    // Known hazard: after a 301/302/303 fetch has already turned a POST into a GET on its way to the 402,
+    // so this URL saw only a GET, yet the paid retry sends it the POST with its body (307/308 keep the
+    // POST throughout, so they are fine). If that bites, throw `redirect_refused` here for any method
+    // but GET and HEAD instead.
     if (first.redirected && first.url) {
-      if (request.method !== 'GET' && request.method !== 'HEAD') {
-        throw new RadiusPaymentError(
-          'redirect_refused',
-          `Not paying: ${request.method} ${request.url} was redirected to ${first.url} before the 402. After a redirect only GET and HEAD are paid: a 301, 302 or 303 answers the 402 to a GET, and a request body must not be sent to a URL that never saw it`,
-          { status: first.status, url: first.url },
-        );
-      }
       retry = new Request(first.url, retry);
       if (!sameOrigin(new URL(retry.url), new URL(request.url))) ['authorization', 'cookie'].forEach((h) => retry.headers.delete(h));
     }

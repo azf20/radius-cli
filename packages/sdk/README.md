@@ -209,10 +209,10 @@ const receipt = getPaymentReceipt(res, payFetch.network);   // { success, transa
   `upto`, `offer.amount` and `maxPerRequest` are about the authorised maximum; the receipt carries
   the amount actually charged, which is validated against the signed maximum (`invalid_receipt`
   otherwise). The Radius facilitator does not advertise `upto` yet, so it is unit-tested only.
-- Redirects: `fetch` follows them before the 402 (its limit of 20), and a GET or HEAD is paid at the final
-  URL (`response.url`), with the price cap and `onPaymentRequired` applied to that offer. Any other
-  method throws `redirect_refused`: after a 301, 302 or 303 the 402 was answered to a GET, and a request
-  body must not be sent to a URL that never saw it. The paid request is sent with `redirect: 'manual'`;
+- Redirects: `fetch` follows them before the 402 (its limit of 20) and the request is paid at the final URL
+  (`response.url`), with the price cap and `onPaymentRequired` applied to that offer. The paid request repeats
+  the original method and body there, as `@x402/fetch` and `@x402/axios` do. After a 301, 302 or 303, fetch has
+  turned a POST into a GET on the way to the 402, so the final URL saw a GET but is paid with the POST. The paid request is sent with `redirect: 'manual'`;
   if the seller redirects after payment, the redirect is followed with a plain GET/HEAD that carries no
   payment header (and no `Authorization` or `Cookie` on another origin), `onPaid` gets the receipt from
   the redirect's `PAYMENT-RESPONSE`, and the final response carries that header. In browsers

@@ -10,7 +10,6 @@ const MAX_RESPONSE_BYTES = 25 * 1024 * 1024;
 export interface HttpResponse {
   /** URL that answered, after any redirects fetch followed. */
   url?: string;
-  redirected?: boolean;
   status: number;
   headers: Headers;
   body: Uint8Array;
@@ -75,7 +74,6 @@ export async function runRequest(
   const buf = await readCappedBody(res);
   return {
     url: res.url,
-    redirected: res.redirected,
     status: res.status,
     headers: res.headers,
     body: buf,

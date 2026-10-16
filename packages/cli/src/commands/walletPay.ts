@@ -23,6 +23,7 @@ import {
   readBodyArg,
   readCappedBody,
   runRequest,
+  sameOrigin,
   SUPPORTED_VERBS,
   type HttpResponse,
   type HttpVerb,
@@ -149,9 +150,7 @@ async function runPay(
   const replayFirst: typeof fetch = async (input, init) => {
     if (!replayed) {
       replayed = true;
-      const replay = new Response(initial.body as BodyInit, { status: initial.status, headers: initial.headers });
-      // Say where the 402 came from, so the SDK pays the final URL (and refuses a redirected POST).
-      return Object.defineProperties(replay, { url: { value: initial.url }, redirected: { value: initial.redirected } });
+      return new Response(initial.body as BodyInit, { status: initial.status, headers: initial.headers });
     }
     return fetch(input, init);
   };
@@ -254,7 +253,11 @@ async function runPay(
   let res: Response;
   try {
     const hasBody = body !== undefined && method !== 'GET' && method !== 'HEAD';
-    res = await payFetch(url, {
+    // Pay where the 402 came from: the final URL, if fetch followed redirects to it (the SDK does the
+    // same for its own requests); method and body are replayed there, see createRadiusFetch.
+    const target = initial.url || url;
+    if (!sameOrigin(target, url)) ['authorization', 'cookie'].forEach((h) => reqHeaders.delete(h));
+    res = await payFetch(target, {
       method,
       headers: reqHeaders,
       body: hasBody ? (body as BodyInit) : undefined,
@@ -385,7 +388,7 @@ async function reportPaymentError(e: RadiusPaymentError, ctx: ErrorContext): Pro
       err.write(`pay: ${e.message.replace(/^Insufficient/, 'insufficient')}.\n`);
       return 1;
     case 'redirect_refused':
-      err.write(`pay: ${e.message}.\n`);
+      err.write('pay: server redirected the paid request cross-origin; refusing to replay the payment header.\n');
       return 1;
     default:
       err.write(`pay: ${e.message}\n`);

@@ -598,15 +598,18 @@ describe('a 402 behind a redirect', () => {
     for (const r of shop.seen) expect([r.headers.authorization, r.headers.cookie, r.headers['x-api-key']]).toEqual([undefined, undefined, 'k']);
   });
 
-  it('refuses to pay a redirected POST or PUT, and says why', async () => {
-    for (const status of [301, 302, 303, 307]) {
-      for (const method of ['POST', 'PUT']) {
-        const shop = await serve(paywall);
-        const short = await serve(redirector(status, `${shop.origin}/final`));
-        await rejects(payer()(`${short.origin}/r`, { method, body: '{"a":1}' }), 'redirect_refused', /only GET and HEAD are paid.*never saw it/);
-        expect(shop.seen.some((r) => r.headers['payment-signature'])).toBe(false);
-      }
-    }
+  it('replays the original method and body at the final URL', async () => {
+    const shop = await serve(paywall);
+    const short = await serve(redirector(307, `${shop.origin}/final`));
+    await payer()(`${short.origin}/r`, { method: 'POST', body: '{"a":1}' });
+    expect(shop.seen.map((r) => [r.method, r.body, !!r.headers['payment-signature']])).toEqual([['POST', '{"a":1}', false], ['POST', '{"a":1}', true]]);
+  });
+
+  it('pays a POST that a 302 turned into a GET as a POST (documented hazard)', async () => {
+    const shop = await serve(paywall);
+    const short = await serve(redirector(302, `${shop.origin}/final`));
+    await payer()(`${short.origin}/r`, { method: 'POST', body: '{"a":1}' });
+    expect(shop.seen.map((r) => [r.method, r.body, !!r.headers['payment-signature']])).toEqual([['GET', '', false], ['POST', '{"a":1}', true]]);
   });
 
   it('pays a redirected HEAD and GET', async () => {
