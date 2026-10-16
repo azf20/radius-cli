@@ -84,7 +84,7 @@ RADIUS_HOME=.radius RADIUS_NETWORK=testnet RADIUS_PASSWORD='use-a-secret-manager
 `radius-cli` resolves configuration in this order:
 
 1. CLI flags: `--network`, `--rpc-url`, `--sbc`, `--rusd`, `--json`, `--private-key`
-2. Environment: `RADIUS_NETWORK`, `RADIUS_RPC_URL`, `RADIUS_SBC_ADDRESS`, `RADIUS_RUSD_ADDRESS`, `RADIUS_PAY_NETWORKS`, `RADIUS_BASE_RPC_URL`, `RADIUS_BASE_SEPOLIA_RPC_URL`, `RADIUS_PASSWORD`, `RADIUS_KEYSTORE_PATH`, `RADIUS_HOME`
+2. Environment: `RADIUS_NETWORK`, `RADIUS_RPC_URL`, `RADIUS_SBC_ADDRESS`, `RADIUS_RUSD_ADDRESS`, `RADIUS_PAY_NETWORKS`, `RADIUS_MAX_REDIRECTS`, `RADIUS_BASE_RPC_URL`, `RADIUS_BASE_SEPOLIA_RPC_URL`, `RADIUS_PASSWORD`, `RADIUS_KEYSTORE_PATH`, `RADIUS_HOME`
 3. Radius config file in the active Radius home
 4. Built-in defaults
 
@@ -232,7 +232,7 @@ The CLI pays [x402](/build/x402) and [MPP](/reference/radius-sdk#mpp) (`WWW-Auth
 - **Offer choice:** x402 before MPP, then networks in `--networks` order, then offers in the server's order, skipping networks where the wallet's balance does not cover the price.
 - **Protocol versions:** x402 v1 and v2, selected from the server's `x402Version`; MPP `evm` charges, paid with an EIP-3009 authorization and needing no approval or gas.
 - **Schemes:** `exact` with EIP-3009 (v1 and v2) or Permit2 (v2), and `upto` with Permit2 (v2), where the facilitator settles actual usage up to the signed maximum.
-- **Redirects:** the paid retry is never replayed across a cross-origin redirect.
+- **Redirects:** followed before paying, one by default, so a `402` behind a `302` is paid at its final URL. `--max-redirects <n>` (or `RADIUS_MAX_REDIRECTS`, or `maxRedirects` in the config file) changes the limit, and 0 follows none; a longer chain fails with `too many redirects`. `307` and `308` keep the method and body, while `303`, and `POST` on `301` and `302`, become a `GET` without a body. `Authorization`, `Cookie` and payment headers are dropped on a cross-origin redirect, and the price cap and `--threshold` apply to the final URL's offer. The paid retry itself is never redirected.
 
 ### Permit2 approval
 

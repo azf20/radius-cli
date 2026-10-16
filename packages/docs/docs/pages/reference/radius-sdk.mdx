@@ -159,6 +159,7 @@ const payFetch = createRadiusFetch({ network: 'testnet', signer: process.env.RAD
 | `permit2Approval`    | `'auto'` or `'never'`                        | `'auto'`           | Without gas sponsoring, `'auto'` sends one unlimited Permit2 approval; `'never'` throws `approval_required` |
 | `onApprovalRequired` | `(request) => boolean \| Promise<boolean>`   | —                  | Approve or decline any allowance change this client makes; see [approval requests](#approval-requests)      |
 | `onPaid`             | `(receipt, offer) => void`                   | —                  | Called after each paid response                                                                             |
+| `maxRedirects`       | `number`                                     | `1`                | Redirects to follow before paying (0 follows none); the 402 is paid at the final URL                        |
 | `fetch`              | `typeof fetch`                               | `globalThis.fetch` | Underlying fetch                                                                                            |
 
 It also accepts the [network overrides](#networks); with `networks`, they apply to the first network.
@@ -170,6 +171,7 @@ Payment rules:
 - A price in display units is converted for each network's asset; a base-unit `maxPerRequest` applies to each asset as-is.
 - Schemes: x402 v2 `exact` (Permit2 or EIP-3009) and `upto` (Permit2), and x402 v1 `exact` (EIP-3009).
 - The signing window is the server's `maxTimeoutSeconds`, capped at 600 seconds.
+- Redirects (301, 302, 303, 307, 308) are followed before paying, up to `maxRedirects`, so the 402 is read from and paid at the final URL; `maxPerRequest` and `onPaymentRequired` see that URL's offer. 307 and 308 keep the method and body; 303, and POST on 301 and 302, become a GET without a body. `Authorization`, `Cookie` and payment headers are dropped on a cross-origin hop. A longer chain throws `too_many_redirects`. A redirect without `Location`, or to a scheme other than http(s), throws `invalid_redirect`. Requests with `redirect: 'manual'` or `'error'` are left to `fetch`, and in browsers a manual redirect is opaque, so it cannot be followed.
 - The paid retry never follows a redirect to another origin (`redirect_refused`).
 
 ### Offers
@@ -367,6 +369,8 @@ Payment failures throw `RadiusPaymentError` with a `code` and, for some codes, `
 | `payment_rejected`            | The paid retry got another 402; `details.response` holds the response and `details.error` the server's reason |
 | `invalid_receipt`             | An `upto` payment response is invalid, for example it charges more than the signed maximum                    |
 | `redirect_refused`            | The paid retry redirected to another origin                                                                   |
+| `too_many_redirects`          | The request redirected more than `maxRedirects` times before the 402                                          |
+| `invalid_redirect`            | A redirect had no `Location`, an invalid one, or a scheme other than http(s)                                  |
 | `approval_required`           | A Permit2 approval is needed and `permit2Approval` is `'never'`                                               |
 | `approval_failed`             | The approval transaction reverted                                                                             |
 | `faucet`                      | `fund()` failed                                                                                               |

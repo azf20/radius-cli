@@ -7,6 +7,7 @@ import { formatAmount, resolvePrice, type Price } from '../amounts.js';
 import { getBalances, type AccountBalances } from '../balances.js';
 import { toTokenAtomic, type TokenAmount, type TxResult } from '../erc20.js';
 import { RadiusPaymentError } from '../errors.js';
+import { DEFAULT_MAX_REDIRECTS, assertMaxRedirects, followRedirects } from './redirects.js';
 import { describeSupportedSchemes } from '../schemes.js';
 import { PERMIT2_ADDRESS, explorerTxUrl, isNetworkId, overridesOf, resolveNetwork, type Address, type NetworkInput, type NetworkName, type NetworkOverrides, type PaymentNetwork } from '../networks.js';
 import { decodeMppReceipt, decodePaymentReceipt, parseUptoSettlementAmount, type PaymentReceipt } from '../receipt.js';
@@ -155,6 +156,15 @@ export interface RadiusFetchOptions extends NetworkOverrides {
   onPaid?: (receipt: PaymentReceipt, offer: PaymentOffer) => void | Promise<void>;
   /** Underlying fetch (defaults to globalThis.fetch). */
   fetch?: typeof globalThis.fetch;
+  /**
+   * Redirects (301, 302, 303, 307, 308) to follow before paying (default 1, 0 to follow none). The
+   * 402 is read from, and paid at, the final URL; a longer chain throws `too_many_redirects`.
+   * Method and body follow the fetch standard (307/308 keep them; 303, and POST on 301/302, become a
+   * bodiless GET) and credentials and payment headers are dropped on a cross-origin hop. Only for
+   * requests with `redirect: 'follow'` (the default); `'manual'` and `'error'` are left to `fetch`.
+   * The paid retry itself is never redirected (see `redirect_refused`).
+   */
+  maxRedirects?: number;
 }
 
 export type { TxResult } from '../erc20.js';
@@ -386,6 +396,8 @@ export function createRadiusFetch(options: RadiusFetchOptions): RadiusFetch {
   });
   const httpClient = new x402HTTPClient(client);
   const baseFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
+  const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
+  assertMaxRedirects(maxRedirects);
 
   /** The one policy gate for allowance changes: `onApprovalRequired` may veto, else proceed. */
   const authorizeApproval = async (request: ApprovalRequest): Promise<void> => {
@@ -797,14 +809,18 @@ export function createRadiusFetch(options: RadiusFetchOptions): RadiusFetch {
   };
 
   const paidFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const request = new Request(input, init);
-    if (request.headers.has('payment-signature') || request.headers.has('x-payment') || /^payment\s/i.test(request.headers.get('authorization') ?? '')) {
-      return baseFetch(request);
+    const original = new Request(input, init);
+    if (original.headers.has('payment-signature') || original.headers.has('x-payment') || /^payment\s/i.test(original.headers.get('authorization') ?? '')) {
+      return baseFetch(original);
     }
+    // Redirects are followed here, before paying, so the 402 is read from (and paid at) the final URL.
+    const { response: first, request } =
+      original.redirect === 'follow'
+        ? await followRedirects(original, baseFetch, maxRedirects)
+        : { response: await baseFetch(original.clone()), request: original };
+    if (first.status !== 402) return first;
     // The paid retry never follows redirects: a 3xx must not carry the payment header to another origin.
     const retry = new Request(request.clone(), { redirect: 'manual' });
-    const first = await baseFetch(request);
-    if (first.status !== 402) return first;
 
     const { offer, x402 } = await selectOffer(first, request);
     if (options.onPaymentRequired && !(await options.onPaymentRequired(offer))) {
@@ -1003,5 +1019,6 @@ export { getPaymentReceipt, decodePaymentReceipt, decodeMppReceipt, parseUptoSet
 export type { MppChallenge } from '../mpp.js';
 export type { PaymentReceipt } from '../receipt.js';
 export { RadiusPaymentError } from '../errors.js';
+export { followRedirects, DEFAULT_MAX_REDIRECTS } from './redirects.js';
 export { radiusEnv } from '../env.js';
 export type { RadiusEnvConfig } from '../env.js';

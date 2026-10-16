@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { followRedirects } from 'radius-sdk/client';
 
 export const SUPPORTED_VERBS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'] as const;
 export type HttpVerb = typeof SUPPORTED_VERBS[number];
@@ -53,20 +54,24 @@ export function parseHeaderArgs(headerArgs: string[] | undefined): Headers {
   return out;
 }
 
+/**
+ * Send the request, following up to `maxRedirects` redirects (see `followRedirects` in radius-sdk).
+ * `request` is the one that produced the response: the final hop, body intact, ready to be paid
+ * if the response is a 402.
+ */
 export async function runRequest(
   verb: HttpVerb,
   url: string,
-  init: { headers: Headers; body?: Uint8Array; redirect?: 'follow' | 'manual' },
-): Promise<HttpResponse> {
+  init: { headers: Headers; body?: Uint8Array; maxRedirects: number },
+): Promise<HttpResponse & { request: Request }> {
   const method = verb.toUpperCase();
   const hasBody = init.body !== undefined && method !== 'GET' && method !== 'HEAD';
 
-  const res = await fetch(url, {
-    method,
-    headers: init.headers,
-    body: hasBody ? (init.body as BodyInit) : undefined,
-    redirect: init.redirect ?? 'follow',
-  });
+  const { response: res, request } = await followRedirects(
+    new Request(url, { method, headers: init.headers, body: hasBody ? (init.body as BodyInit) : undefined }),
+    fetch,
+    init.maxRedirects,
+  );
 
   const buf = await readCappedBody(res);
   return {
@@ -74,6 +79,7 @@ export async function runRequest(
     headers: res.headers,
     body: buf,
     contentType: res.headers.get('content-type'),
+    request,
   };
 }
 
