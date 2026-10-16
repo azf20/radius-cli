@@ -45,6 +45,10 @@ Do not ask an assistant to hand-build x402 headers, signatures, or Permit2 appro
 
 ### 1) Install Radius skills for guidance
 
+The canonical source for current Radius skills is `radiustechsystems/tools`.
+Use it for new installs and updates. The older `skills` and `radius-dev-skill`
+repository names are retired sources.
+
 ### Claude Code
 
 ```bash
@@ -64,11 +68,10 @@ Update an installed plugin with `claude plugin update radius-dev@radius-cli`.
 npx skills add radiustechsystems/tools
 ```
 
-For **Codex**, select it in the installer or pass `--agent codex`. To install
-from a local checkout, run this from your application directory:
+For **Codex**, run this from your application directory:
 
 ```bash
-npx skills add /absolute/path/to/tools --agent codex \
+npx skills add radiustechsystems/tools --agent codex \
   --skill radius-dev dripping-faucet x402 sell-api --copy
 npx skills list --agent codex
 ```

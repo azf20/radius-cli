@@ -316,7 +316,7 @@ async function integrate(framework, dir) {
     await cp(join(HERE, 'fixtures/sell-oneshot', framework), dir, { recursive: true });
     return { integrator: 'reference' };
   }
-  // The prompt names no framework and no repository path: the agent reads the framework from package.json and finds the sell-api skill itself.
+  // This scaffold has a real manifest: the agent must detect its framework rather than use the prompt's read-only fallback.
   const prompt = (await readFile(ONESHOT_PROMPT, 'utf8')).replace(/^---\n[\s\S]*?\n---\n/, '');
   const promptFile = join(dir, 'PROMPT.md');
   await writeFile(promptFile, prompt);

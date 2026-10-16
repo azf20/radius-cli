@@ -1,6 +1,6 @@
 # Repository migration checks
 
-The implementation source for the SDK, CLI, docs and current Radius skills is
+The canonical source for the SDK, CLI, docs and Radius skill installs is
 [`radiustechsystems/tools`](https://github.com/radiustechsystems/tools).
 The npm package names remain `radius-sdk` and `radius-cli`. Claude retains the
 installed identity `radius-dev@radius-cli`: `radius-dev` is the plugin name and
@@ -101,15 +101,32 @@ ref with no pending package changesets, then verify `docs-live` and public URLs.
 
 ## Legacy skill repository
 
-On October 16, GitHub resolved both `radiustechsystems/radius-dev-skill` and
+At the start of the October 16 review, GitHub resolved both `radiustechsystems/radius-dev-skill` and
 `radiustechsystems/skills` to the same unarchived repository,
 `radiustechsystems/skills`. They are not two repositories that can be archived
-independently. The legacy repository also has an enabled publisher with four
-Hermes subscribers; a push can send update webhooks.
+independently. The legacy repository then had an enabled publisher with four
+Hermes subscribers, so a push could send update webhooks.
 
-ENG-2448's October 14 instruction to keep `skills` canonical while archiving
-`radius-dev-skill` therefore needs a revised disposition. Do not archive the
-redirect target or send subscriber updates as part of an install-link fix.
-Record the canonical-source decision and subscriber handoff in Linear before
-retiring that repository. Historical skills.sh counts are separate from the
-GitHub redirect; do not claim that a redirect merges installation statistics.
+Eriks confirmed on October 16 that **`tools` is canonical**, superseding the
+October 14 source decision in ENG-2448. Retire the single legacy repository:
+disable its publisher, check for queued or running deliveries, replace its
+README with the [migration notice](legacy-skills-readme.md), then archive it.
+Do not create a second distribution copy of the current skills there.
+
+The publisher is now `disabled_manually`, with no queued or running deliveries.
+GitHub rejected the README update with HTTP 409: **"Changes must be made through
+a pull request."** The notice is prepared here, but the default-branch README
+has not changed and the repository has not been archived. Landing the notice
+requires a README-only administrative PR in the legacy repository; this is
+separate from the single implementation PR in `tools`.
+
+Preserve the old skill files, history, and subscriber configuration. Existing
+agents can still fetch historical content, but the retired publisher sends no
+new updates. Subscriber migration is separate: do not silently change their
+repository/commit settings or recreate webhooks in `tools`.
+
+Verify both legacy repository URLs resolve to the archived repository and
+historical raw skill files remain readable. Historical skills.sh counts are
+separate from the GitHub redirect; retirement does not merge installation
+statistics. Use `radiustechsystems/tools` for new installs and continue tracking
+historical legacy counts separately until the KPI workflow is migrated.

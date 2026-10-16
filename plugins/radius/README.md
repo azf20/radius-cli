@@ -20,8 +20,13 @@ The `evals/` directory holds the Claude Code plugin eval cases. The
 `sell-oneshot` case shares its prompt with the repository's deterministic
 seller evaluation (`pnpm eval:payments:sell -- --case SELL-ONESHOT`), which
 boots the app an agent writes and pays it against a mock facilitator.
+The transcript eval runs without an application scaffold, so the shared prompt
+provides an assumed manifest when no project is present. The deterministic
+runner supplies real Express and Hono projects and checks the written app.
 
-Install it from the [Radius `tools` repository](https://github.com/radiustechsystems/tools):
+Install it from the [Radius `tools` repository](https://github.com/radiustechsystems/tools),
+the canonical source for current Radius skills. The former `skills` and
+`radius-dev-skill` repository names are retired install sources.
 
 ```sh
 claude plugin marketplace add radiustechsystems/tools
@@ -32,11 +37,10 @@ The marketplace keeps the name `radius-cli` so existing installations retain
 their identity after the GitHub repository rename to `tools`. The plugin name
 remains `radius-dev`; continue using `radius-dev@radius-cli` for installs and updates.
 
-For Codex, run this in your application directory to install from a local
-checkout of this repository:
+For Codex, run this in your application directory:
 
 ```sh
-npx skills add /absolute/path/to/tools --agent codex \
+npx skills add radiustechsystems/tools --agent codex \
   --skill radius-dev dripping-faucet x402 sell-api --copy
 npx skills list --agent codex
 ```

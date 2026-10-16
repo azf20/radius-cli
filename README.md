@@ -31,6 +31,10 @@ and does not enter the npm Changesets release flow. The marketplace's
 `metadata.version` describes the catalog, not the plugin; the marketplace entry
 does not duplicate the plugin version.
 
+`radiustechsystems/tools` is the canonical source for all Radius skills and new
+installs. The legacy `skills` repository (also reached through `radius-dev-skill`)
+is retired; use this repository for updates.
+
 In Claude Code, install from this repository:
 
 ```text
@@ -42,11 +46,10 @@ In Claude Code, install from this repository:
 installations; it is independent of the GitHub repository name, `tools`.
 The plugin name remains `radius-dev`.
 
-For Codex, install from a checkout into your application project. Run this in
-the application directory, replacing the source path with your tools checkout:
+For Codex, run this in your application directory:
 
 ```sh
-npx skills add /absolute/path/to/tools --agent codex \
+npx skills add radiustechsystems/tools --agent codex \
   --skill radius-dev dripping-faucet x402 sell-api --copy
 npx skills list --agent codex
 ```
@@ -86,9 +89,10 @@ IDs supported by the chosen provider. The defaults target Anthropic. Fork PRs
 run static checks without model credentials; trusted PRs and main pushes run
 the paid eval suite. No eval case is allowed to execute wallet or payment tools.
 
-The older skills repository still owns its live Hermes subscriber publisher.
-Moving that publisher requires updating subscribers' repository and commit
-settings first; this plugin migration does not send those webhooks.
+The legacy repository's Hermes subscriber publisher is retired with that
+repository. Existing subscriber configuration and historical skill files stay
+there for reference. Migrating subscribers to receive updates from `tools`
+requires a separate change to their repository and commit settings.
 
 ## Development
 
