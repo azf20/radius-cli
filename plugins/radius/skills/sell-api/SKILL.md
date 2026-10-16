@@ -11,7 +11,7 @@ user-invocable: true
 
 Use this Skill when the user wants to **get paid** for HTTP requests:
 
-- Charge per request for an endpoint ("monetize my API", "add a paywall", "make this route cost $0.01")
+- Charge per request for an endpoint ("monetize my API", "add a paywall", "make this route cost 0.01 USD")
 - Charge AI crawlers and agents for articles or pages on a publisher or CMS site, keeping human readers free ("pay-per-crawl", "charge GPTBot", "gate my articles")
 - Add x402 payment gating (HTTP 402 + `PAYMENT-REQUIRED`) or MPP (`WWW-Authenticate: Payment`) to a TypeScript app
 - Accept Radius SBC, optionally Base USDC, through a facilitator
@@ -23,7 +23,7 @@ Use this Skill when the user wants to **get paid** for HTTP requests:
 
 - **Use `radius-sdk` (0.5.0 or later).** Never hand-build `PAYMENT-REQUIRED`, verify signatures, or call a facilitator's `/verify` and `/settle` yourself. The SDK does all of it; only the wrapper differs per framework.
 - **Name the network.** `network: 'testnet'` (Radius testnet, chain 72344) until the user asks for mainnet. Omitting `network` means **Radius mainnet**.
-- **Price in USD strings**: `'$0.001'` is 1000 atomic units of SBC (6 decimals). Use `{ amount: '1000' }` only for atomic prices.
+- **Price in decimal USD strings**: `'0.001'` means 0.001 USD and is 1000 atomic units of SBC (6 decimals). Use `{ amount: '1000' }` only for atomic prices.
 - **Recipient from configuration**: `payTo: process.env.PAY_TO` (or `c.env.PAY_TO` on Workers), never a literal in code the user will deploy.
 - **Keep `settle: 'before'`** (the default): the handler runs only for money already received, and the receipt is in hand.
 - **Default facilitator** on Radius (the SDK picks the Radius facilitator for the network). Pass `facilitator: { url }` only when the user names one or the network has no default (Base mainnet).
@@ -68,8 +68,8 @@ app.use(radiusPayments({
   payTo: process.env.PAY_TO as `0x${string}`,
   facilitator: process.env.RADIUS_FACILITATOR_URL ? { url: process.env.RADIUS_FACILITATOR_URL } : undefined,
   routes: {
-    'GET /api/report': { price: '$0.001', description: 'Quarterly report', mimeType: 'application/json' },
-    'HEAD /api/report': '$0.001',                         // see gotchas: HEAD runs GET handlers
+    'GET /api/report': { price: '0.001', description: 'Quarterly report', mimeType: 'application/json' },
+    'HEAD /api/report': '0.001',                         // see gotchas: HEAD runs GET handlers
   },
 }));
 app.get('/api/report', (c) => c.json({ report: 'quarterly-sales', paidBy: c.get('radiusPayment')?.payer }));
@@ -97,8 +97,8 @@ Check every route that must stay free the same way: discovery (`/.well-known/*`)
 ### 5. Verify with `radius-cli sell check`
 
 ```bash
-npx radius-cli sell check http://127.0.0.1:3000/api/report --price '$0.001' --probe-head
-npx radius-cli --json sell check http://127.0.0.1:3000/api/report --price '$0.001'   # for agents
+npx radius-cli sell check http://127.0.0.1:3000/api/report --price '0.001' --probe-head
+npx radius-cli --json sell check http://127.0.0.1:3000/api/report --price '0.001'   # for agents
 ```
 
 It requests the route without paying, decodes the x402 challenge and any MPP challenge with the SDK, and checks: the 402 itself, network known, asset and EIP-712 domain of that network, amount (against `--price`, which catches decimals mistakes), `payTo`, `resource.url` bound to the requested URL, `maxTimeoutSeconds`, that the facilitator's `/supported` lists each offer's scheme, network and transfer method, and that a radius-sdk buyer would select the offer. Exit 0 means no check failed. Pass `--facilitator <url>` when the seller uses a non-default facilitator; `--probe-head` warns when an unpaid HEAD is served. Fix every `FAIL` before deploying.
@@ -139,7 +139,7 @@ Current SDK behavior with mitigations, from the seller evaluation suite: [gotcha
 | `'after'` mode, failed settlement | Body withheld, handler headers leak (Hono, Express). Keep `'before'`. |
 | Wildcard route priced once | A payment for `/api/x` unlocks `/api/y` at the same price. Price routes by value. |
 | MPP on Express/Next adapters | Not served. Use `radiusPayments`/Hono for MPP. |
-| Amount `1000000000000000` | 18-decimal mistake. SBC and USDC have 6: `'$0.001'` = `'1000'`. |
+| Amount `1000000000000000` | 18-decimal mistake. SBC and USDC have 6: `'0.001'` = `'1000'`. |
 
 ## Progressive disclosure
 

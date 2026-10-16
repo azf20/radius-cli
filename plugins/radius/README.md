@@ -23,6 +23,9 @@ boots the app an agent writes and pays it against a mock facilitator.
 The transcript eval runs without an application scaffold, so the shared prompt
 provides an assumed manifest when no project is present. The deterministic
 runner supplies real Express and Hono projects and checks the written app.
+Use decimal USD strings such as `'0.001'` in skill entrypoint examples: Claude
+substitutes `$0` and other positional placeholders even inside code fences.
+The plugin validator checks for accidental substitutions in those entrypoints.
 
 Install it from the [Radius `tools` repository](https://github.com/radiustechsystems/tools),
 the canonical source for current Radius skills. The former `skills` and

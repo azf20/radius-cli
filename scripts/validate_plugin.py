@@ -71,6 +71,12 @@ def main():
         frontmatter = content.split("---", 2)[1]
         assert f"name: {skill.parent.name}" in frontmatter, f"name mismatch: {skill}"
         assert "description:" in frontmatter, f"missing description: {skill}"
+        # Claude interpolates $0, $1, etc. when a skill is invoked with arguments,
+        # including inside code fences. Currency and shell examples must stay literal.
+        assert not re.search(r"\$\d+(?!\w)", content), (
+            f"unintended positional argument placeholder in {skill}: "
+            "use decimal USD strings and named shell variables in skill entrypoints"
+        )
         for target in re.findall(r"\]\(([^)#]+)(?:#[^)]*)?\)", content):
             if "://" not in target and not target.startswith("#"):
                 assert (skill.parent / target).exists(), f"broken link {target} in {skill}"
