@@ -38,6 +38,22 @@ In Claude Code, install from this repository:
 /plugin install radius-dev@radius-cli
 ```
 
+`radius-cli` remains the marketplace name for compatibility with existing
+installations; it is independent of the GitHub repository name, `tools`.
+The plugin name remains `radius-dev`.
+
+For Codex, install from a checkout into your application project. Run this in
+the application directory, replacing the source path with your tools checkout:
+
+```sh
+npx skills add /absolute/path/to/tools --agent codex \
+  --skill radius-dev dripping-faucet x402 sell-api --copy
+npx skills list --agent codex
+```
+
+This installs the skill directories and supporting files under `.agents/skills`
+in the application. Start a new Codex conversation after installation.
+
 Update an installed plugin with `claude plugin update radius-dev@radius-cli`.
 For every release-worthy change under `plugins/radius/skills`, or to the plugin
 manifest or README, bump the plugin manifest version in the same PR: patch for
@@ -100,9 +116,19 @@ Publishing uses [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishe
 
 One-time setup (repeat the npm step for every new package):
 
-- On npmjs.com, for `radius-cli` and `radius-sdk`: **Settings → Trusted Publisher → GitHub Actions**, organization `radiustechsystems`, repository `radius-cli`, workflow filename `release.yml`, environment blank (or `npm` if you enable the `environment:` line in the publish job). Once a trusted publish succeeds, set **Publishing access** to *Require two-factor authentication and disallow tokens* so tokens can no longer publish.
+- On npmjs.com, for `radius-cli` and `radius-sdk`: **Settings → Trusted Publisher → GitHub Actions**, organization `radiustechsystems`, repository `tools`, workflow filename `release.yml`, environment blank (or `npm` if you enable the `environment:` line in the publish job). Allow direct `npm publish` for this workflow. Once a trusted publish succeeds, set **Publishing access** to *Require two-factor authentication and disallow tokens* so tokens can no longer publish. Both packages must declare `repository.url` as `git+https://github.com/radiustechsystems/tools.git`, with their respective `repository.directory` values.
 - On GitHub, **Settings → Actions → General → Workflow permissions**: tick *Allow GitHub Actions to create and approve pull requests* (needed to open the Version Packages PR) and choose *Read repository contents and packages permissions* (every workflow declares the permissions it needs). If the option is greyed out, enable it for the organization first.
 - For the docs: Actions secrets `CLOUDFLARE_API_TOKEN` (Workers Scripts edit, for the account that owns `docs.radiustech.xyz`) and `CLOUDFLARE_ACCOUNT_ID`. The `docs-production` environment is created on first deploy; add required reviewers there to gate docs deploys.
 - Optional: mark the `changeset`, `Node 22` and `Node 24` checks as required in the `main` branch ruleset.
 
-Manual fallback: `pnpm version-packages`, merge, then `pnpm release` publishes with `changeset publish`. Each package can also publish from its own directory (`pnpm publish` inside `packages/<name>`); the CLI's `prepublishOnly` refuses to publish until the SDK version it depends on is on npm. Note that `pnpm pack`/tarball publishing in CI does not run `prepublishOnly`, which is why the release workflow builds explicitly and relies on changesets' dependency ordering instead.
+If a publish fails, fix the cause and re-run the failed jobs in the existing
+Release workflow. Keep publishing in GitHub Actions through OIDC; do not work
+around a repository mismatch with a local publish or an npm token. If publishing
+succeeded and only docs deployment failed, use the Deploy docs workflow on a
+ref with no pending package changesets. A subsequent Release run with no new
+packages skips publishing and the dependent docs deployment.
+
+`pnpm pack`/tarball publishing in CI does not run `prepublishOnly`, which is why
+the release workflow builds and tests explicitly and relies on Changesets'
+dependency ordering. See the [repository migration checks](docs/repository-migration.md)
+for install checks, npm configuration after a rename, and release evidence.

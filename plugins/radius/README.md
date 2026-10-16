@@ -28,6 +28,24 @@ claude plugin marketplace add radiustechsystems/tools
 claude plugin install radius-dev@radius-cli
 ```
 
+The marketplace keeps the name `radius-cli` so existing installations retain
+their identity after the GitHub repository rename to `tools`. The plugin name
+remains `radius-dev`; continue using `radius-dev@radius-cli` for installs and updates.
+
+For Codex, run this in your application directory to install from a local
+checkout of this repository:
+
+```sh
+npx skills add /absolute/path/to/tools --agent codex \
+  --skill radius-dev dripping-faucet x402 sell-api --copy
+npx skills list --agent codex
+```
+
+The installer copies each skill's `SKILL.md`, references and scripts into the
+project's `.agents/skills`. Start a new Codex conversation after installing.
+The [public flat skill files](https://docs.radiustech.xyz/build/coding-assistants#public-flat-files)
+are expanded reading references; install the full directories for supporting scripts.
+
 After a new plugin version is published, update an existing installation with
 `claude plugin update radius-dev@radius-cli`. Automatic updates depend on the
 user's marketplace setting.
