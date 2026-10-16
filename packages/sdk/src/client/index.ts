@@ -157,7 +157,7 @@ export interface RadiusFetchOptions extends NetworkOverrides {
   /** Underlying fetch (defaults to globalThis.fetch). */
   fetch?: typeof globalThis.fetch;
   /**
-   * Redirects (301, 302, 303, 307, 308) to follow before paying (default 1, 0 to follow none). The
+   * Redirects (301, 302, 303, 307, 308) to follow before paying (default 20, like fetch; 0 to follow none). The
    * 402 is read from, and paid at, the final URL; a longer chain throws `too_many_redirects`.
    * Method and body follow the fetch standard (307/308 keep them; 303, and POST on 301/302, become a
    * bodiless GET) and credentials and payment headers are dropped on a cross-origin hop. Only for

@@ -1,7 +1,7 @@
 import { RadiusPaymentError } from '../errors.js';
 
-/** Redirects `createRadiusFetch` follows before paying, unless `maxRedirects` says otherwise. */
-export const DEFAULT_MAX_REDIRECTS = 1;
+/** Redirects `createRadiusFetch` follows before paying, unless `maxRedirects` says otherwise: fetch's own limit. */
+export const DEFAULT_MAX_REDIRECTS = 20;
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 

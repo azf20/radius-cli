@@ -209,7 +209,7 @@ const receipt = getPaymentReceipt(res, payFetch.network);   // { success, transa
   `upto`, `offer.amount` and `maxPerRequest` are about the authorised maximum; the receipt carries
   the amount actually charged, which is validated against the signed maximum (`invalid_receipt`
   otherwise). The Radius facilitator does not advertise `upto` yet, so it is unit-tested only.
-- Redirects before paying: `maxRedirects` (default 1, 0 follows none) redirects (301, 302, 303, 307, 308) are
+- Redirects before paying: up to `maxRedirects` (default 20, as in fetch; 0 follows none) redirects (301, 302, 303, 307, 308) are
   followed first, so the 402 is read from, and paid at, the final URL, and `onPaymentRequired` and
   `maxPerRequest` see that URL's offer. Method and body follow the fetch standard (307/308
   keep them; 303, and POST on 301/302, become a bodiless GET), `Authorization`, `Cookie` and payment

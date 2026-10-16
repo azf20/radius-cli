@@ -3,7 +3,6 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { isAddress, type Address } from 'viem';
 import { radiusMainnetChain, radiusTestnetChain, resolveNetwork, SBC, type PaymentNetwork } from 'radius-sdk';
-import { DEFAULT_MAX_REDIRECTS } from 'radius-sdk/client';
 import type { GlobalOptions, NetworkName, ResolvedConfig } from '../types.js';
 
 const RADIUS_DIR = process.env.RADIUS_HOME ?? join(homedir(), '.radius');
@@ -97,6 +96,9 @@ export function resolvePayNetworks(cfg: ResolvedConfig, flag?: string): PaymentN
   });
 }
 
+/** Redirects `wallet pay` follows before paying unless told otherwise (the SDK's own default is fetch's 20). */
+export const DEFAULT_PAY_MAX_REDIRECTS = 1;
+
 /**
  * Redirects `wallet pay` follows before paying: `--max-redirects`, else RADIUS_MAX_REDIRECTS, else
  * `maxRedirects` in the config file, else 1. 0 follows none.
@@ -107,7 +109,7 @@ export function resolveMaxRedirects(flag?: string): number {
     flag !== undefined ? [flag, '--max-redirects']
     : process.env.RADIUS_MAX_REDIRECTS ? [process.env.RADIUS_MAX_REDIRECTS, 'RADIUS_MAX_REDIRECTS']
     : file.maxRedirects !== undefined ? [String(file.maxRedirects), 'maxRedirects in the config file']
-    : [String(DEFAULT_MAX_REDIRECTS), 'default'];
+    : [String(DEFAULT_PAY_MAX_REDIRECTS), 'default'];
   if (!/^\d+$/.test(raw.trim())) throw new Error(`${source} must be a non-negative integer (got '${raw}')`);
   return Number(raw);
 }

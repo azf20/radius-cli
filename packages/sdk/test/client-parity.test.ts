@@ -625,10 +625,16 @@ describe('redirects before paying', () => {
     expect(server.requests.some((r) => r.headers.has('payment-signature'))).toBe(false);
   });
 
-  it('stops at one redirect by default, naming the limit', async () => {
+  it('stops at maxRedirects, naming the limit', async () => {
     const server = routed({ [RESOURCE_URL]: [302, '/a'], 'https://api.example.com/a': [302, '/final'] });
-    await rejects(buyer(server)(RESOURCE_URL), 'too_many_redirects', /followed 1 \(the limit\).*\/final/);
+    await rejects(buyer(server, { maxRedirects: 1 })(RESOURCE_URL), 'too_many_redirects', /followed 1 \(the limit\).*\/final/);
     expect(server.requests).toHaveLength(2);
+  });
+
+  it('follows up to fetch\'s own limit of 20 by default', async () => {
+    const chain = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i): [string, [number, string]] => [i === 0 ? RESOURCE_URL : `https://api.example.com/h${i}`, [302, `/h${i + 1}`]]));
+    expect((await buyer(routed(chain(20)))(RESOURCE_URL)).status).toBe(200);
+    await rejects(buyer(routed(chain(21)))(RESOURCE_URL), 'too_many_redirects', /followed 20 \(the limit\)/);
   });
 
   it('follows as many redirects as maxRedirects allows', async () => {
