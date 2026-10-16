@@ -622,10 +622,10 @@ describe('a 402 behind a redirect', () => {
   });
 
   /** A paywall that, once paid, redirects (with the receipt) to `content`, which wants the token and no payment header. */
-  const tokenShop = (contentOrigin: () => string) => async (req: Seen, res: ServerResponse) => {
+  const tokenShop = (contentOrigin: () => string, status = 302) => async (req: Seen, res: ServerResponse) => {
     const receipt = b64({ success: true, transaction: '0xabc', network: NETWORK_ID, payer: SIGNER.address });
     if (req.url.startsWith('/content')) return void (req.url.endsWith('token=abc') ? res.writeHead(200).end('content') : res.writeHead(403).end());
-    if (req.headers['payment-signature']) return void res.writeHead(302, { location: `${contentOrigin()}/content?token=abc`, 'PAYMENT-RESPONSE': receipt }).end();
+    if (req.headers['payment-signature']) return void res.writeHead(status, { location: `${contentOrigin()}/content?token=abc`, 'PAYMENT-RESPONSE': receipt }).end();
     res.writeHead(402, { 'PAYMENT-REQUIRED': b64(v2(EXACT_EIP3009)) }).end();
   };
 
@@ -640,6 +640,22 @@ describe('a 402 behind a redirect', () => {
     expect(paid).toHaveLength(1);
     const followUp = shop.seen.at(-1)!;
     expect([followUp.url, followUp.headers['payment-signature'], followUp.headers['x-api-key']]).toEqual(['/content?token=abc', undefined, 'k']);
+  });
+
+  it('follows a redirect after payment by fetch\'s rules: 303 and a 301/302 POST become GET, 307/308 repeat the request', async () => {
+    const cases = [
+      [303, 'POST', 'GET', ''], [303, 'PUT', 'GET', ''], [302, 'POST', 'GET', ''], [301, 'POST', 'GET', ''],
+      [302, 'PUT', 'PUT', '{"a":1}'], [301, 'DELETE', 'DELETE', '{"a":1}'], [307, 'POST', 'POST', '{"a":1}'], [308, 'PUT', 'PUT', '{"a":1}'],
+      [303, 'HEAD', 'HEAD', ''], [302, 'HEAD', 'HEAD', ''],
+    ] as const;
+    for (const [status, method, expected, expectedBody] of cases) {
+      const target = await serve((_req, res) => void res.writeHead(200).end('content'));
+      const shop = await serve(tokenShop(() => target.origin, status));
+      await payer()(`${shop.origin}/pay`, { method, body: method === 'HEAD' ? undefined : '{"a":1}', headers: { 'content-type': 'application/json' } });
+      const hop = target.seen[0];
+      expect([status, method, hop.method, hop.body, hop.headers['payment-signature']]).toEqual([status, method, expected, expectedBody, undefined]);
+      expect(hop.headers['content-type']).toBe(expected === 'GET' ? undefined : 'application/json'); // body headers go with the body
+    }
   });
 
   it('sends the follow-up to another origin without the payment header, Authorization or Cookie', async () => {

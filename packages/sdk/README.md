@@ -216,8 +216,9 @@ const receipt = getPaymentReceipt(res, payFetch.network);   // { success, transa
   httpx client does not follow by default); we replay the original method and body at the final URL, even
   though after a 301, 302 or 303 fetch has already turned a POST into a GET on the way to the 402. The paid
   request is sent with `redirect: 'manual'`. If the seller redirects after payment, the redirect is
-  followed with the same method but no body, no payment header, and no `Authorization` or `Cookie` on
-  another origin; `onPaid` gets the receipt from the redirect's `PAYMENT-RESPONSE`, and the final response
+  followed by fetch's rules (303 becomes a GET, a 301/302 POST becomes a GET, other methods are kept,
+  307/308 repeat the method and body; HEAD stays HEAD), never with the payment header, and without
+  `Authorization` or `Cookie` on another origin; `onPaid` gets the receipt from the redirect's `PAYMENT-RESPONSE`, and the final response
   carries that header. In browsers `redirect: 'manual'` yields an opaque response (status 0), which cannot
   be followed.
 - Permit2 approval handled either way: when the server's facilitator sponsors it

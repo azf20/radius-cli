@@ -839,14 +839,22 @@ export function createRadiusFetch(options: RadiusFetchOptions): RadiusFetch {
     }
     retry.headers.set('Access-Control-Expose-Headers', 'PAYMENT-RESPONSE,X-PAYMENT-RESPONSE,Payment-Receipt');
 
+    const replay = retry.clone(); // the paid request consumes its body; a 307/308 or 301/302 follow-up may need it again
     const second = await baseFetch(retry);
     const location = REDIRECT_STATUSES.has(second.status) ? second.headers.get('location') : null;
     if (location) {
       // The seller redirects after paying (say, to the content with a token); the receipt is on this response.
+      // Unlike the paid retry, this hop follows fetch's rules: 303 becomes a GET (HEAD stays HEAD), a 301/302
+      // POST becomes a GET, other methods are kept, and 307/308 repeat method and body. Never a payment header.
       await second.body?.cancel();
       const next = new URL(location, retry.url);
       if (!sameOrigin(next, new URL(retry.url))) ['authorization', 'cookie'].forEach((h) => unpaid.delete(h));
-      const followed = await baseFetch(new Request(next, { method: retry.method, headers: unpaid, signal: retry.signal }));
+      const method = retry.method;
+      const toGet = second.status === 303 ? method !== 'GET' && method !== 'HEAD' : (second.status === 301 || second.status === 302) && method === 'POST';
+      const hasBody = !toGet && method !== 'GET' && method !== 'HEAD';
+      if (toGet) ['content-encoding', 'content-language', 'content-location', 'content-type'].forEach((h) => unpaid.delete(h));
+      const body = hasBody ? await replay.arrayBuffer() : undefined;
+      const followed = await baseFetch(new Request(next, { method: toGet ? 'GET' : method, headers: unpaid, body, signal: retry.signal }));
       const headers = new Headers(followed.headers);
       for (const h of ['payment-response', 'x-payment-response', MPP_RECEIPT_HEADER]) {
         const v = second.headers.get(h);
