@@ -71,7 +71,6 @@ radius-cli wallet pay get https://example.com/r --threshold 0.05          # auto
 radius-cli wallet pay get https://example.com/r -y                        # auto-pay any amount
 radius-cli wallet pay get https://example.com/r --networks radius,base    # also pay in USDC on Base
 radius-cli wallet pay get https://example.com/r --protocol mpp            # pay over MPP only
-radius-cli wallet pay get https://example.com/r --max-redirects 2         # follow up to 2 redirects before paying (default 1)
 radius-cli wallet pay get https://example.com/r --json                    # envelope with status/headers/body/payment
 ```
 
@@ -88,7 +87,7 @@ Payments are made on Radius in SBC by default. `--networks radius,base` (or `RAD
 
 Permit2 payments need an ERC-20 approval for the canonical Permit2 contract. When the server declares `eip2612GasSponsoring` (the Radius facilitator does), the CLI signs an EIP-2612 permit alongside the payment and no on-chain approval transaction is ever sent — a wallet holding only SBC can pay. Otherwise pass `--approve-permit2` (or `-y`) to submit a one-time unlimited approval automatically (gas in SBC on Radius, ETH on Base); without it the CLI prompts (or refuses with no TTY). `--approve-permit2` grants the approval whenever the allowance is short, sponsored or not, which is the way out when a facilitator answers 412. Each payment is still individually authorized by a signed Permit2 message capped to that payment's amount.
 
-Redirects are followed before paying, so an endpoint that `302`s to a `402` is paid at the final URL, and the price cap, `--threshold` and prompt apply to that URL's offer. `--max-redirects <n>` sets how many to follow (default 1; `0` follows none); a longer chain fails with an error naming the flag. Method and body follow fetch (`303`, and `POST` on `301`/`302`, become a `GET`), and `Authorization` and `Cookie` are dropped on a cross-origin redirect. The paid retry is never redirected or replayed across a cross-origin redirect.
+Redirects are followed by `fetch` (its limit of 20), and the 402 is paid at the final URL, not at the redirector; the retry repeats your method and body there, and `Authorization` and `Cookie` are dropped on another origin. The paid retry is never replayed across a cross-origin redirect.
 
 Body goes to stdout; payment confirmation and (optionally, with `--include`) headers go to stderr — pipeable.
 

@@ -23,6 +23,7 @@ import {
   readBodyArg,
   readCappedBody,
   runRequest,
+  sameOrigin,
   SUPPORTED_VERBS,
   type HttpResponse,
   type HttpVerb,
@@ -35,7 +36,6 @@ interface SubOptions {
   data?: string;
   networks?: string;
   protocol?: string;
-  maxRedirects: string;
   threshold?: string;
   yes?: boolean;
   include?: boolean;
@@ -71,7 +71,6 @@ export function registerWalletPay(wallet: Command): void {
         '  radius-cli wallet pay post https://api.example.com/x -d \'{"a":1}\'',
         '  radius-cli wallet pay get https://example.com/r --threshold 0.05',
         '  radius-cli wallet pay get https://example.com/r --networks radius,base',
-        '  radius-cli wallet pay get https://example.com/r --max-redirects 2',
       ].join('\n'),
     )
     .argument('<verb>', `HTTP verb (${SUPPORTED_VERBS.join(', ')})`)
@@ -83,7 +82,6 @@ export function registerWalletPay(wallet: Command): void {
       `networks to pay on, in preference order (${PAY_NETWORKS.join(', ')}; default radius, or RADIUS_PAY_NETWORKS)`,
     )
     .option('--protocol <name>', "payment protocol: auto (x402 when offered, else MPP), x402 or mpp", 'auto')
-    .option('--max-redirects <n>', 'redirects to follow before paying; the final URL is paid (0 follows none)', '1')
     .option('--threshold <decimal>', "auto-pay if the offered fee ≤ this amount in the asset's display units (USD for SBC and USDC)")
     .option('-y, --yes', 'auto-confirm payment without prompting (capped by --threshold when both are given)')
     .option(
@@ -125,27 +123,16 @@ async function runPay(
     process.stderr.write(`pay: unsupported verb '${verbArg}' (use one of ${SUPPORTED_VERBS.join(', ')})\n`);
     process.exit(2);
   }
+  const method = verb.toUpperCase();
+
   const reqHeaders = parseHeaderArgs(subOpts.header);
   const body = readBodyArg(subOpts.data);
   if (body && !reqHeaders.has('content-type') && looksLikeJson(body)) {
     reqHeaders.set('content-type', 'application/json');
   }
 
-  if (!/^\d+$/.test(subOpts.maxRedirects)) {
-    process.stderr.write(`pay: --max-redirects must be a non-negative integer (got '${subOpts.maxRedirects}')\n`);
-    process.exit(2);
-  }
-  const maxRedirects = Number(subOpts.maxRedirects);
-
   // First request without a wallet: no keystore prompt unless the server actually wants payment.
-  let initial: Awaited<ReturnType<typeof runRequest>>;
-  try {
-    initial = await runRequest(verb as HttpVerb, url, { headers: reqHeaders, body, maxRedirects });
-  } catch (e) {
-    if (!(e instanceof RadiusPaymentError)) throw e;
-    process.stderr.write(`pay: ${e.message}. Raise --max-redirects to follow more.\n`);
-    process.exit(1);
-  }
+  const initial = await runRequest(verb as HttpVerb, url, { headers: reqHeaders, body });
   if (initial.status !== 402) {
     emit(initial, null, !!opts.json, !!subOpts.include);
     process.exit(initial.status >= 400 ? 1 : 0);
@@ -178,7 +165,6 @@ async function runPay(
     // The policy (threshold / prompt / refuse) lives in onPaymentRequired; no SDK-side cap.
     maxPerRequest: { amount: maxUint256.toString() },
     fetch: replayFirst,
-    maxRedirects,
     onPaymentRequired: async (o) => {
       offer = o;
       const { decimals, symbol } = o.network.asset;
@@ -266,7 +252,15 @@ async function runPay(
 
   let res: Response;
   try {
-    res = await payFetch(initial.request); // the request that drew the 402: the final URL after any redirects
+    const hasBody = body !== undefined && method !== 'GET' && method !== 'HEAD';
+    // Pay where the 402 came from: the final URL, if fetch followed redirects to it.
+    const target = initial.url || url;
+    if (!sameOrigin(target, url)) ['authorization', 'cookie'].forEach((h) => reqHeaders.delete(h));
+    res = await payFetch(target, {
+      method,
+      headers: reqHeaders,
+      body: hasBody ? (body as BodyInit) : undefined,
+    });
   } catch (e) {
     if (!(e instanceof RadiusPaymentError)) throw e;
     process.exit(

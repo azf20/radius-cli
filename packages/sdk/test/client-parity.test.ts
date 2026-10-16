@@ -5,6 +5,8 @@
  * request goes to a mock fetch and, where a flow needs the RPC (Permit2 allowance, EIP-2612
  * nonce), JSON-RPC is stubbed on the global fetch.
  */
+import { createServer, type IncomingHttpHeaders, type Server, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { maxUint256, recoverTypedDataAddress, toHex, type Address, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -586,95 +588,59 @@ describe('redirect guard on the paid retry', () => {
   });
 });
 
-// -- redirects before paying --------------------------------------------------------------------
+// -- redirects before paying (real HTTP servers, so fetch itself follows them) -------------------
 
-describe('redirects before paying', () => {
-  const FINAL_URL = 'https://api.example.com/final';
-  const challenge = v2(EXACT_EIP3009);
+describe('a 402 behind a redirect', () => {
+  type Seen = { method: string; url: string; headers: IncomingHttpHeaders; body: string };
+  const servers: Server[] = [];
+  afterEach(() => { servers.splice(0).forEach((s) => s.close()); });
 
-  /** `hops` maps a URL to [status, location]; any other URL is a seller: 402, then 200 once paid. */
-  function routed(hops: Record<string, [number, string?]>): MockServer {
-    const requests: Request[] = [];
-    const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const req = new Request(input, init);
-      requests.push(req);
-      const hop = hops[req.url];
-      if (hop) return new Response(null, { status: hop[0], headers: hop[1] ? { location: hop[1] } : {} });
-      if (req.headers.has('payment-signature')) return Response.json({ ok: true });
-      return new Response(null, { status: 402, headers: { 'PAYMENT-REQUIRED': b64(challenge) } });
-    }) as typeof globalThis.fetch;
-    return { fetch, requests };
-  }
-  const urls = (server: MockServer) => server.requests.map((r) => `${r.method} ${r.url}`);
-  const chain = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i): [string, [number, string]] => [i === 0 ? RESOURCE_URL : `https://api.example.com/h${i}`, [302, `/h${i + 1}`]]));
-
-  it('pays the 402 behind a 302 at the final URL, not at the redirector', async () => {
-    const server = routed({ [RESOURCE_URL]: [302, '/final'] });
-    const res = await buyer(server)(RESOURCE_URL);
-    expect(res.status).toBe(200);
-    expect(urls(server)).toEqual([`GET ${RESOURCE_URL}`, `GET ${FINAL_URL}`, `GET ${FINAL_URL}`]);
-    expect(server.requests[2].headers.has('payment-signature')).toBe(true);
-  });
-
-  it('applies the price cap to the final 402', async () => {
-    const server = routed({ [RESOURCE_URL]: [302, '/final'] });
-    await rejects(buyer(server, { maxPerRequest: { amount: '1' } })(RESOURCE_URL), 'price_above_limit');
-    expect(server.requests.some((r) => r.headers.has('payment-signature'))).toBe(false);
-  });
-
-  it('follows up to maxRedirects, 20 by default, and then throws', async () => {
-    await rejects(buyer(routed(chain(2)), { maxRedirects: 1 })(RESOURCE_URL), 'redirect_refused', /Too many redirects.*limit of 1/);
-    expect((await buyer(routed(chain(2)), { maxRedirects: 2 })(RESOURCE_URL)).status).toBe(200);
-    expect((await buyer(routed(chain(20)))(RESOURCE_URL)).status).toBe(200);
-    await rejects(buyer(routed(chain(21)))(RESOURCE_URL), 'redirect_refused', /limit of 20/);
-    expect((await buyer(routed(chain(1)), { maxRedirects: 0 })(RESOURCE_URL)).status).toBe(302); // 0 follows none
-  });
-
-  it('drops Authorization and Cookie on another origin only, and never sends payment headers before the 402', async () => {
-    const headers = { Authorization: 'Bearer s', Cookie: 'a=b', 'X-Api-Key': 'k' };
-    const cross = routed({ [RESOURCE_URL]: [302, 'https://pay.example.net/final'] });
-    await buyer(cross)(RESOURCE_URL, { headers });
-    expect(cross.requests.map((r) => r.headers.get('authorization'))).toEqual(['Bearer s', null, null]);
-    expect(cross.requests.map((r) => r.headers.get('cookie'))).toEqual(['a=b', null, null]);
-    expect(cross.requests[1].headers.get('x-api-key')).toBe('k');
-    expect(cross.requests[1].headers.has('payment-signature')).toBe(false);
-    const same = routed({ [RESOURCE_URL]: [302, '/final'] });
-    await buyer(same)(RESOURCE_URL, { headers });
-    expect(same.requests[1].headers.get('authorization')).toBe('Bearer s');
-  });
-
-  it('keeps method and body on 307 and 308', async () => {
-    for (const status of [307, 308]) {
-      const server = routed({ [RESOURCE_URL]: [status, '/final'] });
-      await buyer(server)(RESOURCE_URL, { method: 'POST', body: '{"a":1}', headers: { 'content-type': 'application/json' } });
-      expect(urls(server).slice(1)).toEqual([`POST ${FINAL_URL}`, `POST ${FINAL_URL}`]);
-      expect(await server.requests[2].text()).toBe('{"a":1}');
-    }
-  });
-
-  it('turns POST into a bodiless GET on 301, 302 and 303, but keeps PUT on 301 and 302', async () => {
-    for (const [status, method, expected] of [[301, 'POST', 'GET'], [302, 'POST', 'GET'], [303, 'POST', 'GET'], [302, 'PUT', 'PUT'], [303, 'PUT', 'GET']] as const) {
-      const server = routed({ [RESOURCE_URL]: [status, '/final'] });
-      await buyer(server)(RESOURCE_URL, { method, body: 'x' });
-      expect(server.requests[1].method).toBe(expected);
-      expect(await server.requests[1].text()).toBe(expected === 'GET' ? '' : 'x');
-    }
-  });
-
-  it('pays behind a redirect served by a real HTTP server', async () => {
-    const { createServer } = await import('node:http');
+  /** Start a server; `seen` logs its requests, `route` answers them. */
+  async function serve(route: (req: Seen, res: ServerResponse) => void) {
+    const seen: Seen[] = [];
     const server = createServer((req, res) => {
-      if (req.url === '/r') return void res.writeHead(302, { location: '/final' }).end();
-      if (req.headers['payment-signature']) return void res.writeHead(200).end('paid');
-      res.writeHead(402, { 'PAYMENT-REQUIRED': b64(challenge) }).end();
+      let body = '';
+      req.on('data', (c) => (body += c)).on('end', () => {
+        const r = { method: req.method!, url: req.url!, headers: req.headers, body };
+        seen.push(r);
+        route(r, res);
+      });
     });
+    servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    try {
-      const res = await createRadiusFetch({ network: NETWORK, signer: PK, maxPerRequest: { amount: '1000000' } })(`http://127.0.0.1:${(server.address() as { port: number }).port}/r`);
-      expect([res.status, await res.text()]).toEqual([200, 'paid']);
-    } finally {
-      server.close();
-    }
+    return { seen, origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
+  }
+  /** A paywall: 402 until a payment header arrives, then 200. */
+  const paywall = (req: Seen, res: ServerResponse) => {
+    if (req.headers['payment-signature']) return void res.writeHead(200).end('paid');
+    res.writeHead(402, { 'PAYMENT-REQUIRED': b64(v2(EXACT_EIP3009)) }).end();
+  };
+  const redirector = (status: number, location: string) => (_req: Seen, res: ServerResponse) => void res.writeHead(status, { location }).end();
+  const payer = (extra: Partial<RadiusFetchOptions> = {}) => createRadiusFetch({ network: NETWORK, signer: PK, maxPerRequest: { amount: '1000000' }, ...extra });
+
+  it('is paid at the final URL, never at the redirector', async () => {
+    const shop = await serve(paywall);
+    const short = await serve(redirector(302, `${shop.origin}/final`));
+    const res = await payer()(`${short.origin}/r`);
+    expect([res.status, await res.text()]).toEqual([200, 'paid']);
+    expect(short.seen.map((r) => [r.url, !!r.headers['payment-signature']])).toEqual([['/r', false]]);
+    expect(shop.seen.map((r) => [r.url, !!r.headers['payment-signature']])).toEqual([['/final', false], ['/final', true]]);
+  });
+
+  it('leaves Authorization and Cookie behind on another origin', async () => {
+    const shop = await serve(paywall);
+    const short = await serve(redirector(302, `${shop.origin}/final`));
+    await payer()(`${short.origin}/r`, { headers: { Authorization: 'Bearer s', Cookie: 'a=b', 'X-Api-Key': 'k' } });
+    expect(short.seen[0].headers.authorization).toBe('Bearer s');
+    expect(shop.seen).toHaveLength(2);
+    for (const r of shop.seen) expect([r.headers.authorization, r.headers.cookie, r.headers['x-api-key']]).toEqual([undefined, undefined, 'k']);
+  });
+
+  it('keeps method and body through a 307', async () => {
+    const shop = await serve(paywall);
+    const short = await serve(redirector(307, `${shop.origin}/final`));
+    await payer()(`${short.origin}/r`, { method: 'POST', body: '{"a":1}' });
+    expect(shop.seen.map((r) => [r.method, r.body])).toEqual([['POST', '{"a":1}'], ['POST', '{"a":1}']]);
   });
 });
 

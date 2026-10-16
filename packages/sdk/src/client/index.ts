@@ -155,8 +155,6 @@ export interface RadiusFetchOptions extends NetworkOverrides {
   onPaid?: (receipt: PaymentReceipt, offer: PaymentOffer) => void | Promise<void>;
   /** Underlying fetch (defaults to globalThis.fetch). */
   fetch?: typeof globalThis.fetch;
-  /** Redirects to follow before paying (default 20, like fetch; 0 follows none). The 402 is paid at the final URL. */
-  maxRedirects?: number;
 }
 
 export type { TxResult } from '../erc20.js';
@@ -231,28 +229,6 @@ const ATOMIC_AMOUNT = /^[0-9]+$/;
 
 function sameOrigin(a: URL, b: URL): boolean {
   return a.protocol === b.protocol && a.host === b.host;
-}
-
-/**
- * Send `request`, re-issuing it at each redirect's `Location` (301, 302, 303, 307, 308) up to `max`
- * times; 0 follows none. Returns the last response and the request that drew it. Method and body
- * follow fetch: 303, and POST on 301 and 302, become a bodiless GET. `Authorization` and `Cookie`
- * are dropped on another origin. Throws `redirect_refused` past the limit.
- */
-export async function followRedirects(request: Request, send: typeof globalThis.fetch, max: number): Promise<{ response: Response; request: Request }> {
-  for (let hops = 0; ; hops++) {
-    const response = await send(new Request(request.clone(), { redirect: 'manual' }));
-    const location = max > 0 && REDIRECT_STATUSES.has(response.status) ? response.headers.get('location') : null;
-    if (!location) return { response, request };
-    const url = new URL(location, request.url);
-    if (hops >= max) throw new RadiusPaymentError('redirect_refused', `Too many redirects: ${request.url} redirects to ${url.href}, past the limit of ${max}`, { status: response.status, location });
-    await response.body?.cancel();
-    const headers = new Headers(request.headers);
-    if (!sameOrigin(url, new URL(request.url))) ['authorization', 'cookie'].forEach((h) => headers.delete(h));
-    const toGet = response.status === 303 ? !['GET', 'HEAD'].includes(request.method) : (response.status === 301 || response.status === 302) && request.method === 'POST';
-    if (toGet) headers.delete('content-type');
-    request = toGet ? new Request(url, { method: 'GET', headers, signal: request.signal }) : new Request(url, new Request(request, { headers }));
-  }
 }
 
 function isSigner(v: unknown): v is ClientEvmSigner {
@@ -821,19 +797,23 @@ export function createRadiusFetch(options: RadiusFetchOptions): RadiusFetch {
   };
 
   const paidFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const original = new Request(input, init);
-    if (original.headers.has('payment-signature') || original.headers.has('x-payment') || /^payment\s/i.test(original.headers.get('authorization') ?? '')) {
-      return baseFetch(original);
+    const request = new Request(input, init);
+    if (request.headers.has('payment-signature') || request.headers.has('x-payment') || /^payment\s/i.test(request.headers.get('authorization') ?? '')) {
+      return baseFetch(request);
     }
-    // Follow redirects first, so the 402 is read from, and paid at, the final URL.
-    const { response: first, request } = original.redirect === 'follow'
-      ? await followRedirects(original, baseFetch, options.maxRedirects ?? 20)
-      : { response: await baseFetch(original.clone()), request: original };
-    if (first.status !== 402) return first;
     // The paid retry never follows redirects: a 3xx must not carry the payment header to another origin.
-    const retry = new Request(request.clone(), { redirect: 'manual' });
+    let retry = new Request(request.clone(), { redirect: 'manual' });
+    const first = await baseFetch(request);
+    if (first.status !== 402) return first;
+    // fetch followed any redirects: pay the URL that answered 402, not the redirector. The retry
+    // repeats our method and body (fetch does not say whether a 301/302/303 turned a POST into a GET),
+    // and, like fetch, leaves Authorization and Cookie behind on another origin.
+    if (first.redirected && first.url) {
+      retry = new Request(first.url, retry);
+      if (!sameOrigin(new URL(retry.url), new URL(request.url))) ['authorization', 'cookie'].forEach((h) => retry.headers.delete(h));
+    }
 
-    const { offer, x402 } = await selectOffer(first, request);
+    const { offer, x402 } = await selectOffer(first, retry);
     if (options.onPaymentRequired && !(await options.onPaymentRequired(offer))) {
       throw new RadiusPaymentError('declined', `Payment of ${offer.amountFormatted} to ${offer.payTo} declined`, offer);
     }

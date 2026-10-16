@@ -209,8 +209,7 @@ const receipt = getPaymentReceipt(res, payFetch.network);   // { success, transa
   `upto`, `offer.amount` and `maxPerRequest` are about the authorised maximum; the receipt carries
   the amount actually charged, which is validated against the signed maximum (`invalid_receipt`
   otherwise). The Radius facilitator does not advertise `upto` yet, so it is unit-tested only.
-- Redirects before paying: up to `maxRedirects` (default 20, like fetch; 0 follows none) are followed, so the 402 is read from and paid at the final URL. Method and body follow fetch (303, and POST on 301/302, become a GET); `Authorization` and `Cookie` are dropped on another origin; a longer chain throws `redirect_refused`. `redirect: 'manual'` / `'error'` requests are left to `fetch`. `followRedirects` is exported.
-- Redirects on the paid retry: it is sent with `redirect: 'manual'`. A 3xx to another origin throws
+- Redirects: `fetch` follows redirects on the first request (its limit of 20) and the 402 is paid at the final URL (`response.url`), with the price cap and `onPaymentRequired` applied to that offer; the retry repeats the original method and body there, and drops `Authorization` and `Cookie` on another origin. The paid retry is sent with `redirect: 'manual'`. A 3xx to another origin throws
   `redirect_refused` without following (the payment header is never replayed elsewhere); a
   same-origin 3xx is returned as-is, unfollowed, so you decide whether to re-request (and pay
   again). In browsers this surfaces as an opaque redirect response (status 0).
