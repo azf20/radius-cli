@@ -21,5 +21,7 @@ moves). Merging that PR publishes the bumped packages to npm through Trusted Pub
 pushes a `<name>@<version>` git tag for each, and creates a GitHub Release. The examples are private and
 never versioned.
 
-Manual fallback: `pnpm version-packages`, merge, then `pnpm release` (builds and runs `changeset publish`
-in dependency order, SDK before CLI). See the root README for the one-time npm and GitHub setup.
+If publishing fails, correct the cause and re-run the failed jobs in the existing Release workflow.
+Use its npm Trusted Publishing connection rather than a local publish or an npm token. A failure
+after successful publication needs only the failed follow-up work; do not bump versions to retry
+docs deployment. See the [root README](../README.md#releasing) for setup and recovery.

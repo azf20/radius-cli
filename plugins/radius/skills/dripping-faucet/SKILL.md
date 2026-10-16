@@ -148,7 +148,7 @@ const signer = privateKeyToAccount(key as `0x${string}`);
 const wallet = createRadiusFetch({
   network: 'testnet',
   signer,
-  maxPerRequest: '$0.01', // required by the paying client; fund() does not spend it
+  maxPerRequest: '0.01', // required by the paying client; fund() does not spend it
 });
 const drip = await wallet.fund();
 if (!drip.txHash) throw new Error('Faucet accepted the request without a transaction hash');
@@ -286,7 +286,7 @@ fi
 FAUCET_URL="https://testnet.radiustech.xyz/api/v1/faucet"
 SBC_CONTRACT="0x33ad9e4BD16B69B5BFdED37D8B5D9fF9aba014Fb"
 RPC_URL="https://rpc.testnet.radiustech.xyz"
-ADDRESS="${1:?Usage: $0 <address>}"
+ADDRESS="${1:?Usage: faucet-probe.sh <address>}"
 
 echo "Probing faucet configuration (unsigned only, testnet): $ADDRESS"
 

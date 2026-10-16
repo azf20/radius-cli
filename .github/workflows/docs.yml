@@ -72,6 +72,9 @@ jobs:
       - name: Validate docs
         run: pnpm docs:validate
 
+      - name: Test flat skill generation
+        run: pnpm test:skills
+
       - name: Markdown audit
         run: pnpm docs:markdown-audit
 

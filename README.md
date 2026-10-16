@@ -31,21 +31,41 @@ and does not enter the npm Changesets release flow. The marketplace's
 `metadata.version` describes the catalog, not the plugin; the marketplace entry
 does not duplicate the plugin version.
 
+`radiustechsystems/tools` is the canonical source for all Radius skills and new
+installs. The legacy `skills` repository (also reached through `radius-dev-skill`)
+is retired; use this repository for updates.
+
 In Claude Code, install from this repository:
 
 ```text
 /plugin marketplace add radiustechsystems/tools
-/plugin install radius-dev@radius-cli
+/plugin install radius@tools
 ```
 
-Update an installed plugin with `claude plugin update radius-dev@radius-cli`.
+The plugin is `radius`, and the marketplace is `tools`. Existing installations
+of `radius-dev@radius-cli` need a one-time migration; see the
+[migration commands](packages/docs/docs/pages/build/coding-assistants.mdx#claude-code).
+
+For Codex, run this in your application directory:
+
+```sh
+npx skills add radiustechsystems/tools --agent codex \
+  --skill radius-dev dripping-faucet x402 sell-api --copy
+npx skills list --agent codex
+```
+
+This installs the skill directories and supporting files under `.agents/skills`
+in the application. Start a new Codex conversation after installation.
+
+Update an installed plugin with `claude plugin update radius@tools`.
 For every release-worthy change under `plugins/radius/skills`, or to the plugin
 manifest or README, bump the plugin manifest version in the same PR: patch for
-corrections, minor for new capabilities, major for incompatible changes. The
+corrections, minor for new capabilities, major for incompatible stable releases
+(next minor while the plugin is 0.x). The
 plugin CI check enforces a version increase independently of Changesets.
 After merging to `main`, users of this GitHub marketplace can update; marketplace
 automatic updates are off by default unless users enable them. A plugin release
-may be tagged `radius-dev--v<version>` for a traceable release point.
+may be tagged `radius--v<version>` for a traceable release point.
 
 When CLI or SDK work changes a documented API, audit the affected skills in
 the package PR. Publish plugin instructions for a new package API only after
@@ -70,9 +90,10 @@ IDs supported by the chosen provider. The defaults target Anthropic. Fork PRs
 run static checks without model credentials; trusted PRs and main pushes run
 the paid eval suite. No eval case is allowed to execute wallet or payment tools.
 
-The older skills repository still owns its live Hermes subscriber publisher.
-Moving that publisher requires updating subscribers' repository and commit
-settings first; this plugin migration does not send those webhooks.
+The legacy repository's Hermes subscriber publisher is retired with that
+repository. Existing subscriber configuration and historical skill files stay
+there for reference. Migrating subscribers to receive updates from `tools`
+requires a separate change to their repository and commit settings.
 
 ## Development
 
@@ -100,9 +121,18 @@ Publishing uses [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishe
 
 One-time setup (repeat the npm step for every new package):
 
-- On npmjs.com, for `radius-cli` and `radius-sdk`: **Settings → Trusted Publisher → GitHub Actions**, organization `radiustechsystems`, repository `radius-cli`, workflow filename `release.yml`, environment blank (or `npm` if you enable the `environment:` line in the publish job). Once a trusted publish succeeds, set **Publishing access** to *Require two-factor authentication and disallow tokens* so tokens can no longer publish.
+- On npmjs.com, for `radius-cli` and `radius-sdk`: **Settings → Trusted Publisher → GitHub Actions**, organization `radiustechsystems`, repository `tools`, workflow filename `release.yml`, environment blank (or `npm` if you enable the `environment:` line in the publish job). Allow direct `npm publish` for this workflow. Once a trusted publish succeeds, set **Publishing access** to *Require two-factor authentication and disallow tokens* so tokens can no longer publish. Both packages must declare `repository.url` as `git+https://github.com/radiustechsystems/tools.git`, with their respective `repository.directory` values.
 - On GitHub, **Settings → Actions → General → Workflow permissions**: tick *Allow GitHub Actions to create and approve pull requests* (needed to open the Version Packages PR) and choose *Read repository contents and packages permissions* (every workflow declares the permissions it needs). If the option is greyed out, enable it for the organization first.
 - For the docs: Actions secrets `CLOUDFLARE_API_TOKEN` (Workers Scripts edit, for the account that owns `docs.radiustech.xyz`) and `CLOUDFLARE_ACCOUNT_ID`. The `docs-production` environment is created on first deploy; add required reviewers there to gate docs deploys.
 - Optional: mark the `changeset`, `Node 22` and `Node 24` checks as required in the `main` branch ruleset.
 
-Manual fallback: `pnpm version-packages`, merge, then `pnpm release` publishes with `changeset publish`. Each package can also publish from its own directory (`pnpm publish` inside `packages/<name>`); the CLI's `prepublishOnly` refuses to publish until the SDK version it depends on is on npm. Note that `pnpm pack`/tarball publishing in CI does not run `prepublishOnly`, which is why the release workflow builds explicitly and relies on changesets' dependency ordering instead.
+If a publish fails, fix the cause and re-run the failed jobs in the existing
+Release workflow. Keep publishing in GitHub Actions through OIDC; do not work
+around a repository mismatch with a local publish or an npm token. If publishing
+succeeded and only docs deployment failed, use the Deploy docs workflow on a
+ref with no pending package changesets. A subsequent Release run with no new
+packages skips publishing and the dependent docs deployment.
+
+`pnpm pack`/tarball publishing in CI does not run `prepublishOnly`, which is why
+the release workflow builds and tests explicitly and relies on Changesets'
+dependency ordering.

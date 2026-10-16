@@ -45,20 +45,51 @@ Do not ask an assistant to hand-build x402 headers, signatures, or Permit2 appro
 
 ### 1) Install Radius skills for guidance
 
+The canonical source for current Radius skills is `radiustechsystems/tools`.
+Use it for new installs and updates. The older `skills` and `radius-dev-skill`
+repository names are retired sources.
+
 ### Claude Code
 
 ```bash
 /plugin marketplace add radiustechsystems/tools
-/plugin install radius-dev@radius-cli
+/plugin install radius@tools
 ```
 
-The `radius-dev` plugin includes the `radius-dev`, `dripping-faucet`, `x402` (paying and the protocol), and `sell-api` (charging for an API or for articles and pages) skills.
+The `radius` plugin includes the `radius-dev`, `dripping-faucet`, `x402` (paying and the protocol), and `sell-api` (charging for an API or for articles and pages) skills.
+
+Update it with `claude plugin update radius@tools`. Plugin 0.2.0 changes the
+install identity from `radius-dev@radius-cli` to `radius@tools`. For an existing
+user-scoped installation, migrate once after the renamed plugin is published:
+
+```bash
+claude plugin uninstall radius-dev@radius-cli --scope user
+claude plugin marketplace remove radius-cli --scope user
+claude plugin marketplace add radiustechsystems/tools --scope user
+claude plugin install radius@tools --scope user
+```
+
+For project or local installations, use the corresponding scope instead.
+Individual skill names remain the same; plugin commands use the `radius`
+prefix, for example `/radius:sell-api`.
 
 ### npx skills
 
 ```bash
 npx skills add radiustechsystems/tools
 ```
+
+For **Codex**, run this from your application directory:
+
+```bash
+npx skills add radiustechsystems/tools --agent codex \
+  --skill radius-dev dripping-faucet x402 sell-api --copy
+npx skills list --agent codex
+```
+
+This installs all four skill directories, including references and scripts,
+under your project's `.agents/skills`. Start a new Codex conversation after
+installation so it can discover them.
 
 ### Public flat files
 
@@ -68,6 +99,9 @@ Agents can also read the generated skill references directly:
 - `https://docs.radiustech.xyz/skills/dripping-faucet.md`
 - `https://docs.radiustech.xyz/skills/x402.md`
 - `https://docs.radiustech.xyz/skills/sell-api.md`
+
+These flat files combine the instructions and Markdown references. Install
+the full skill directories when the workflow needs supporting scripts or templates.
 
 ### 2) Install and verify radius-cli
 

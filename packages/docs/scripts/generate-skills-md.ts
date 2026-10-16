@@ -30,7 +30,8 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, existsSync } from 'node:fs';
-import { join, dirname, relative } from 'node:path';
+import { join, dirname, relative, resolve, basename } from 'node:path';
+import { parse } from 'yaml';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -211,22 +212,31 @@ function bumpHeadings(md: string, n: number): string {
  * For example: [gotchas.md](gotchas.md) → [Production Gotchas](#production-gotchas)
  * And: [gotchas.md](gotchas.md#1-sbc-uses-6-decimals-not-18) → [Production Gotchas](#1-sbc-uses-6-decimals-not-18)
  */
-function rewriteInternalLinks(md: string, fileTitleMap: Map<string, string>): string {
-  // Match [text](filename.md) and [text](filename.md#anchor)
+function rewriteInternalLinks(
+  md: string,
+  fileTitleMap: Map<string, string>,
+  sourceFile: string,
+  skillRoot: string,
+): string {
   return md.replace(
-    /\[([^\]]*)\]\(([a-zA-Z0-9_-]+\.md)(#[^)]+)?\)/g,
+    /\[([^\]]*)\]\(([^\s)#]+)(#[^)]+)?\)/g,
     (_match, linkText: string, filename: string, anchor?: string) => {
-      const title = fileTitleMap.get(filename);
-      if (!title) {
-        // Not an internal skill file link — leave unchanged
-        return _match;
+      if (/^(?:[a-z][a-z\d+.-]*:|\/)/i.test(filename)) return _match;
+
+      const target = resolve(dirname(sourceFile), filename);
+      const name = basename(target);
+      const title = fileTitleMap.get(name);
+      if (title && target === resolveSkillFile(skillRoot, join(skillRoot, 'references'), name)) {
+        return `[${linkText}](${anchor ?? `#${slugify(title)}`})`;
       }
-      if (anchor) {
-        // Link to a specific anchor within the target file
-        return `[${linkText}](${anchor})`;
+
+      // Scripts, templates and other skills are not concatenated into this file.
+      // Link to their source rather than an unserved /skills/references/ path.
+      const sourcePath = relative(SKILLS_SOURCE_DIR, target);
+      if (!existsSync(target) || sourcePath.startsWith('..')) {
+        throw new Error(`Unresolvable skill link ${filename} in ${sourceFile}`);
       }
-      // Link to the file's H1 heading
-      return `[${linkText}](#${slugify(title)})`;
+      return `[${linkText}](${SKILLS_REPO_URL}/blob/main/${sourcePath}${anchor ?? ''})`;
     },
   );
 }
@@ -244,10 +254,12 @@ function rewriteInternalLinks(md: string, fileTitleMap: Map<string, string>): st
 /** Read `description` from the skill's SKILL.md frontmatter, the same text agents see when loading the skill. */
 function readSkillDescription(skillName: string, skillRoot: string): string {
   const raw = readFileSync(join(skillRoot, 'SKILL.md'), 'utf-8');
-  const frontmatter = raw.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? '';
-  const description = frontmatter.match(/^description:\s*(.+)$/m)?.[1]?.trim();
-  if (!description) throw new Error(`[${skillName}] SKILL.md has no description in its frontmatter`);
-  return description.replace(/^(['"])(.*)\1$/, '$2');
+  const frontmatter = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? '';
+  const description: unknown = parse(frontmatter)?.description;
+  if (typeof description !== 'string' || !description.trim()) {
+    throw new Error(`[${skillName}] SKILL.md has no description in its frontmatter`);
+  }
+  return description.replace(/\s+/g, ' ').trim();
 }
 
 /** Build AgentSkills.io-compliant YAML frontmatter for a skill. */
@@ -377,7 +389,12 @@ function processSkill(plugin: MarketplacePlugin, skillName: string, skillRoot: s
     const bumped = bumpHeadings(content, 1);
 
     // Rewrite internal links to in-document anchors
-    const rewritten = rewriteInternalLinks(bumped, fileTitleMap);
+    const rewritten = rewriteInternalLinks(
+      bumped,
+      fileTitleMap,
+      resolveSkillFile(skillRoot, refsDir, filename),
+      skillRoot,
+    );
 
     sections.push(rewritten);
   }
