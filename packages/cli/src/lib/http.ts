@@ -8,6 +8,8 @@ const FORBIDDEN_REQUEST_HEADERS = new Set(['host', 'x-payment', 'payment-signatu
 const MAX_RESPONSE_BYTES = 25 * 1024 * 1024;
 
 export interface HttpResponse {
+  /** URL that answered, after any redirects fetch followed. */
+  url?: string;
   status: number;
   headers: Headers;
   body: Uint8Array;
@@ -64,12 +66,14 @@ export async function runRequest(
   const res = await fetch(url, {
     method,
     headers: init.headers,
-    body: hasBody ? (init.body as BodyInit) : undefined,
+    // A Blob, not the bytes: fetch cannot replay a Uint8Array body through a 307/308 redirect (detached buffer).
+    body: hasBody ? new Blob([init.body as BlobPart]) : undefined,
     redirect: init.redirect ?? 'follow',
   });
 
   const buf = await readCappedBody(res);
   return {
+    url: res.url,
     status: res.status,
     headers: res.headers,
     body: buf,

@@ -232,7 +232,7 @@ The CLI pays [x402](/build/x402) and [MPP](/reference/radius-sdk#mpp) (`WWW-Auth
 - **Offer choice:** x402 before MPP, then networks in `--networks` order, then offers in the server's order, skipping networks where the wallet's balance does not cover the price.
 - **Protocol versions:** x402 v1 and v2, selected from the server's `x402Version`; MPP `evm` charges, paid with an EIP-3009 authorization and needing no approval or gas.
 - **Schemes:** `exact` with EIP-3009 (v1 and v2) or Permit2 (v2), and `upto` with Permit2 (v2), where the facilitator settles actual usage up to the signed maximum.
-- **Redirects:** the paid retry is never replayed across a cross-origin redirect.
+- **Redirects:** followed by `fetch` (up to 20). A request whose `402` comes after a redirect is paid at the final URL, repeating the verb and body, with the price cap and `--threshold` applied to that offer. A redirect after payment is followed without the payment header, and the receipt is read from it.
 
 ### Permit2 approval
 

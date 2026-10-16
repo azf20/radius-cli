@@ -170,7 +170,7 @@ Payment rules:
 - A price in display units is converted for each network's asset; a base-unit `maxPerRequest` applies to each asset as-is.
 - Schemes: x402 v2 `exact` (Permit2 or EIP-3009) and `upto` (Permit2), and x402 v1 `exact` (EIP-3009).
 - The signing window is the server's `maxTimeoutSeconds`, capped at 600 seconds.
-- The paid retry never follows a redirect to another origin (`redirect_refused`).
+- A request whose 402 comes after a redirect is paid at the final URL, repeating the original method and body (a POST that fetch turned into a GET on a 301, 302 or 303 is paid as a POST). A redirect after payment is followed without payment headers, and the receipt is read from it.
 
 ### Offers
 
@@ -366,7 +366,7 @@ Payment failures throw `RadiusPaymentError` with a `code` and, for some codes, `
 | `invalid_challenge`           | The 402 could not be parsed; `details.response` holds the response                                            |
 | `payment_rejected`            | The paid retry got another 402; `details.response` holds the response and `details.error` the server's reason |
 | `invalid_receipt`             | An `upto` payment response is invalid, for example it charges more than the signed maximum                    |
-| `redirect_refused`            | The paid retry redirected to another origin                                                                   |
+| `redirect_refused`            | No longer raised: a redirect on the paid request is followed without the payment header                       |
 | `approval_required`           | A Permit2 approval is needed and `permit2Approval` is `'never'`                                               |
 | `approval_failed`             | The approval transaction reverted                                                                             |
 | `faucet`                      | `fund()` failed                                                                                               |

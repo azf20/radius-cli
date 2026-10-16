@@ -209,10 +209,18 @@ const receipt = getPaymentReceipt(res, payFetch.network);   // { success, transa
   `upto`, `offer.amount` and `maxPerRequest` are about the authorised maximum; the receipt carries
   the amount actually charged, which is validated against the signed maximum (`invalid_receipt`
   otherwise). The Radius facilitator does not advertise `upto` yet, so it is unit-tested only.
-- Redirects: the paid retry is sent with `redirect: 'manual'`. A 3xx to another origin throws
-  `redirect_refused` without following (the payment header is never replayed elsewhere); a
-  same-origin 3xx is returned as-is, unfollowed, so you decide whether to re-request (and pay
-  again). In browsers this surfaces as an opaque redirect response (status 0).
+- Redirects: `fetch` follows them before the 402 (its limit of 20) and the request is paid at the final URL
+  (`response.url`), with the price cap and `onPaymentRequired` applied to that offer. For GET and HEAD that
+  is all there is to it. POST and other methods are where x402 clients diverge (`@x402/fetch` and
+  `@x402/axios` replay the original request through redirects, the Go client pays per hop, the Python
+  httpx client does not follow by default); we replay the original method and body at the final URL, even
+  though after a 301, 302 or 303 fetch has already turned a POST into a GET on the way to the 402. The paid
+  request is sent with `redirect: 'manual'`. If the seller redirects after payment, the redirect is
+  followed by fetch's rules (303 becomes a GET, a 301/302 POST becomes a GET, other methods are kept,
+  307/308 repeat the method and body; HEAD stays HEAD), never with the payment header, and without
+  `Authorization` or `Cookie` on another origin; `onPaid` gets the receipt from the redirect's `PAYMENT-RESPONSE`, and the final response
+  carries that header. In browsers `redirect: 'manual'` yields an opaque response (status 0), which cannot
+  be followed.
 - Permit2 approval handled either way: when the server's facilitator sponsors it
   (`eip2612GasSponsoring`), a wallet holding only SBC pays without any on-chain transaction; when
   it does not, the SDK sends one unlimited approval from the signer (`permit2Approval: 'auto'`,

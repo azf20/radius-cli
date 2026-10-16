@@ -802,15 +802,28 @@ export function createRadiusFetch(options: RadiusFetchOptions): RadiusFetch {
       return baseFetch(request);
     }
     // The paid retry never follows redirects: a 3xx must not carry the payment header to another origin.
-    const retry = new Request(request.clone(), { redirect: 'manual' });
+    let retry = new Request(request.clone(), { redirect: 'manual' });
     const first = await baseFetch(request);
     if (first.status !== 402) return first;
+    // fetch followed redirects before the 402. We pay at the URL that answered it, not the redirector,
+    // and replay the ORIGINAL method and body there (leaving Authorization and Cookie behind on another
+    // origin, as fetch does). This matches @x402/fetch and @x402/axios, whose paid retry is a copy of the
+    // original request; the x402 spec says nothing about redirects or methods.
+    // Known hazard: after a 301/302/303 fetch has already turned a POST into a GET on its way to the 402,
+    // so this URL saw only a GET, yet the paid retry sends it the POST with its body (307/308 keep the
+    // POST throughout, so they are fine). If that bites, throw `redirect_refused` here for any method
+    // but GET and HEAD instead.
+    if (first.redirected && first.url) {
+      retry = new Request(first.url, retry);
+      if (!sameOrigin(new URL(retry.url), new URL(request.url))) ['authorization', 'cookie'].forEach((h) => retry.headers.delete(h));
+    }
 
-    const { offer, x402 } = await selectOffer(first, request);
+    const { offer, x402 } = await selectOffer(first, retry);
     if (options.onPaymentRequired && !(await options.onPaymentRequired(offer))) {
       throw new RadiusPaymentError('declined', `Payment of ${offer.amountFormatted} to ${offer.payTo} declined`, offer);
     }
 
+    const unpaid = new Headers(retry.headers); // what a redirect after payment may carry on: no payment headers
     if (offer.protocol === 'x402') {
       await ensureAllowance(offer);
       // Narrow the challenge to the chosen offer so the upstream selector cannot pick another.
@@ -826,24 +839,28 @@ export function createRadiusFetch(options: RadiusFetchOptions): RadiusFetch {
     }
     retry.headers.set('Access-Control-Expose-Headers', 'PAYMENT-RESPONSE,X-PAYMENT-RESPONSE,Payment-Receipt');
 
+    const replay = retry.clone(); // the paid request consumes its body; a 307/308 or 301/302 follow-up may need it again
     const second = await baseFetch(retry);
-    if (REDIRECT_STATUSES.has(second.status)) {
-      const location = second.headers.get('location');
-      let target: URL | undefined;
-      try {
-        target = location ? new URL(location, retry.url) : undefined;
-      } catch {
-        /* malformed Location: refused below */
+    const location = REDIRECT_STATUSES.has(second.status) ? second.headers.get('location') : null;
+    if (location) {
+      // The seller redirects after paying (say, to the content with a token); the receipt is on this response.
+      // Unlike the paid retry, this hop follows fetch's rules: 303 becomes a GET (HEAD stays HEAD), a 301/302
+      // POST becomes a GET, other methods are kept, and 307/308 repeat method and body. Never a payment header.
+      await second.body?.cancel();
+      const next = new URL(location, retry.url);
+      if (!sameOrigin(next, new URL(retry.url))) ['authorization', 'cookie'].forEach((h) => unpaid.delete(h));
+      const method = retry.method;
+      const toGet = second.status === 303 ? method !== 'GET' && method !== 'HEAD' : (second.status === 301 || second.status === 302) && method === 'POST';
+      const hasBody = !toGet && method !== 'GET' && method !== 'HEAD';
+      if (toGet) ['content-encoding', 'content-language', 'content-location', 'content-type'].forEach((h) => unpaid.delete(h));
+      const body = hasBody ? await replay.arrayBuffer() : undefined;
+      const followed = await baseFetch(new Request(next, { method: toGet ? 'GET' : method, headers: unpaid, body, signal: retry.signal }));
+      const headers = new Headers(followed.headers);
+      for (const h of ['payment-response', 'x-payment-response', MPP_RECEIPT_HEADER]) {
+        const v = second.headers.get(h);
+        if (v) headers.set(h, v);
       }
-      if (!target || !sameOrigin(target, new URL(retry.url))) {
-        throw new RadiusPaymentError(
-          'redirect_refused',
-          `Server redirected the paid request to ${location ?? '(no Location)'}; refusing to replay the payment header across origins`,
-          { status: second.status, location },
-        );
-      }
-      // Same-origin: handed back unfollowed. Re-requesting the target is the caller's call (it may cost another payment).
-      return second;
+      return settled(second, new Response(followed.body, { status: followed.status, statusText: followed.statusText, headers }), offer);
     }
     if (second.status === 402) {
       // `details.response` is the server's answer, left unread for the caller to inspect; the reason
@@ -864,7 +881,12 @@ export function createRadiusFetch(options: RadiusFetchOptions): RadiusFetch {
       const details: PaymentRejectedDetails = { response: second, error, challenge };
       throw new RadiusPaymentError('payment_rejected', `Server rejected the payment (${error ?? 'no reason given'})`, details);
     }
-    const receipt = offer.protocol === 'x402' ? x402Receipt(second, offer) : mppReceipt(second, offer);
+    return settled(second, second, offer);
+  };
+
+  /** Report the receipt carried by `paid` (the response to the paid request) and return `result` to the caller. */
+  const settled = async (paid: Response, result: Response, offer: PaymentOffer): Promise<Response> => {
+    const receipt = offer.protocol === 'x402' ? x402Receipt(paid, offer) : mppReceipt(paid, offer);
     if (receipt && options.onPaid) {
       try {
         await options.onPaid(receipt, offer);
@@ -872,7 +894,7 @@ export function createRadiusFetch(options: RadiusFetchOptions): RadiusFetch {
         console.error('radius-sdk onPaid hook failed:', e);
       }
     }
-    return second;
+    return result;
   };
 
   const x402Receipt = (res: Response, offer: X402Offer): PaymentReceipt | undefined => {

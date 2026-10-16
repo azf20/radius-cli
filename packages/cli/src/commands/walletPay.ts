@@ -23,6 +23,7 @@ import {
   readBodyArg,
   readCappedBody,
   runRequest,
+  sameOrigin,
   SUPPORTED_VERBS,
   type HttpResponse,
   type HttpVerb,
@@ -252,7 +253,11 @@ async function runPay(
   let res: Response;
   try {
     const hasBody = body !== undefined && method !== 'GET' && method !== 'HEAD';
-    res = await payFetch(url, {
+    // Pay where the 402 came from: the final URL, if fetch followed redirects to it (the SDK does the
+    // same for its own requests); method and body are replayed there, see createRadiusFetch.
+    const target = initial.url || url;
+    if (!sameOrigin(target, url)) ['authorization', 'cookie'].forEach((h) => reqHeaders.delete(h));
+    res = await payFetch(target, {
       method,
       headers: reqHeaders,
       body: hasBody ? (body as BodyInit) : undefined,
