@@ -11,22 +11,26 @@ The maintained skills are `radius-dev`, `dripping-faucet`, `x402`, and `sell-api
 
 ```sh
 claude plugin marketplace add radiustechsystems/tools
-claude plugin install radius-dev@radius-cli
+claude plugin install radius@tools
 ```
 
-The maintained plugin keeps the marketplace name `radius-cli` for compatibility
-with existing tools installations. Update it with:
+The maintained plugin is `radius` in the `tools` marketplace. Update it with:
 
 ```sh
-claude plugin update radius-dev@radius-cli
+claude plugin update radius@tools
 ```
 
 If you installed this legacy repository's `radius-dev@radius-dev-skill`, remove
-that old plugin after installing from `tools` to avoid loading duplicate skills:
+that old plugin and marketplace first, then run the installation commands above:
 
 ```sh
-claude plugin uninstall radius-dev@radius-dev-skill
+claude plugin uninstall radius-dev@radius-dev-skill --scope user
+claude plugin marketplace remove radius-dev-skill --scope user
 ```
+
+Use the matching scope for a project or local installation. For the previous
+`radius-dev@radius-cli` installation, follow the
+[plugin migration guide](https://github.com/radiustechsystems/tools/blob/main/docs/repository-migration.md#claude-plugin-name-migration).
 
 ## Codex and skills-compatible agents
 

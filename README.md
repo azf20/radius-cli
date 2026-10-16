@@ -39,12 +39,12 @@ In Claude Code, install from this repository:
 
 ```text
 /plugin marketplace add radiustechsystems/tools
-/plugin install radius-dev@radius-cli
+/plugin install radius@tools
 ```
 
-`radius-cli` remains the marketplace name for compatibility with existing
-installations; it is independent of the GitHub repository name, `tools`.
-The plugin name remains `radius-dev`.
+The plugin is `radius`, and the marketplace is `tools`. Existing installations
+of `radius-dev@radius-cli` need a one-time migration; see the
+[migration commands](docs/repository-migration.md#claude-plugin-name-migration).
 
 For Codex, run this in your application directory:
 
@@ -57,14 +57,15 @@ npx skills list --agent codex
 This installs the skill directories and supporting files under `.agents/skills`
 in the application. Start a new Codex conversation after installation.
 
-Update an installed plugin with `claude plugin update radius-dev@radius-cli`.
+Update an installed plugin with `claude plugin update radius@tools`.
 For every release-worthy change under `plugins/radius/skills`, or to the plugin
 manifest or README, bump the plugin manifest version in the same PR: patch for
-corrections, minor for new capabilities, major for incompatible changes. The
+corrections, minor for new capabilities, major for incompatible stable releases
+(next minor while the plugin is 0.x). The
 plugin CI check enforces a version increase independently of Changesets.
 After merging to `main`, users of this GitHub marketplace can update; marketplace
 automatic updates are off by default unless users enable them. A plugin release
-may be tagged `radius-dev--v<version>` for a traceable release point.
+may be tagged `radius--v<version>` for a traceable release point.
 
 When CLI or SDK work changes a documented API, audit the affected skills in
 the package PR. Publish plugin instructions for a new package API only after

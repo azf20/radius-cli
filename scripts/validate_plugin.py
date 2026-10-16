@@ -52,6 +52,8 @@ def main():
     marketplace = load_json(ROOT / ".claude-plugin/marketplace.json")
     manifest = load_json(PLUGIN / ".claude-plugin/plugin.json")
     entries = marketplace["plugins"]
+    assert marketplace["name"] == "tools", "the public marketplace identity is tools"
+    assert manifest["name"] == "radius", "the public plugin identity is radius"
     assert len(entries) == 1
     assert entries[0]["source"] == "./plugins/radius"
     assert entries[0]["name"] == manifest["name"]

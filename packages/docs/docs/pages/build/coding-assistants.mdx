@@ -53,14 +53,25 @@ repository names are retired sources.
 
 ```bash
 /plugin marketplace add radiustechsystems/tools
-/plugin install radius-dev@radius-cli
+/plugin install radius@tools
 ```
 
-The `radius-dev` plugin includes the `radius-dev`, `dripping-faucet`, `x402` (paying and the protocol), and `sell-api` (charging for an API or for articles and pages) skills.
+The `radius` plugin includes the `radius-dev`, `dripping-faucet`, `x402` (paying and the protocol), and `sell-api` (charging for an API or for articles and pages) skills.
 
-`radius-cli` remains the marketplace name after the GitHub repository rename to
-`tools`, so existing installations keep the identity `radius-dev@radius-cli`.
-Update an installed plugin with `claude plugin update radius-dev@radius-cli`.
+Update it with `claude plugin update radius@tools`. Plugin 0.2.0 changes the
+install identity from `radius-dev@radius-cli` to `radius@tools`. For an existing
+user-scoped installation, migrate once after the renamed plugin is published:
+
+```bash
+claude plugin uninstall radius-dev@radius-cli --scope user
+claude plugin marketplace remove radius-cli --scope user
+claude plugin marketplace add radiustechsystems/tools --scope user
+claude plugin install radius@tools --scope user
+```
+
+For project or local installations, use the corresponding scope instead.
+Individual skill names remain the same; plugin commands use the `radius`
+prefix, for example `/radius:sell-api`.
 
 ### npx skills
 

@@ -2,9 +2,9 @@
 
 The canonical source for the SDK, CLI, docs and Radius skill installs is
 [`radiustechsystems/tools`](https://github.com/radiustechsystems/tools).
-The npm package names remain `radius-sdk` and `radius-cli`. Claude retains the
-installed identity `radius-dev@radius-cli`: `radius-dev` is the plugin name and
-`radius-cli` is the marketplace name, independent of the repository slug.
+The npm package names remain `radius-sdk` and `radius-cli`. The Claude plugin is
+`radius` in the `tools` marketplace, installed as `radius@tools`. Plugin 0.2.0
+replaces the old `radius-dev@radius-cli` identity.
 
 ## Skill installation and public references
 
@@ -22,7 +22,7 @@ claude plugin validate . --strict
 (
   export CLAUDE_CONFIG_DIR="$(mktemp -d)"
   claude plugin marketplace add "$PWD"
-  claude plugin install radius-dev@radius-cli
+  claude plugin install radius@tools
   claude plugin list --json
 )
 ```
@@ -48,6 +48,34 @@ checks their descriptions, plugin version, repository metadata, and links.
 After deploying docs, fetch each `/skills/<name>.md` from
 `https://docs.radiustech.xyz` and verify its version and `tools` source links.
 A successful local build does not establish that the new files are live.
+
+## Claude plugin name migration
+
+After plugin 0.2.0 is merged and available from the marketplace, users with the
+old user-scoped installation run:
+
+```sh
+claude plugin uninstall radius-dev@radius-cli --scope user
+claude plugin marketplace remove radius-cli --scope user
+claude plugin marketplace add radiustechsystems/tools --scope user
+claude plugin install radius@tools --scope user
+claude plugin list --json
+```
+
+For the older `skills` marketplace, the first two commands instead use
+`radius-dev@radius-dev-skill` and `radius-dev-skill`. Run only the removal
+commands matching an installed source, then add `tools` and install `radius@tools`.
+
+Use the matching `project` or `local` scope for installations made at those
+scopes. Marketplace removal affects its installed plugins; the old Radius
+marketplaces each contain only the Radius plugin. Review checked-in
+`extraKnownMarketplaces` and `enabledPlugins` settings for old identities, and
+update managed declarations through their administrator.
+
+The new identity is a replacement, not an automatic compatibility alias.
+Individual skill IDs (`radius-dev`, `dripping-faucet`, `x402`, `sell-api`) remain
+the same. Namespaced Claude commands change from `/radius-dev:<skill>` to
+`/radius:<skill>`. Codex/skills installation is unaffected.
 
 ## npm Trusted Publishing after a rename
 

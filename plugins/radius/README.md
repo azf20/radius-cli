@@ -1,6 +1,6 @@
-# Radius development plugin
+# Radius plugin
 
-The `radius-dev` Claude Code plugin provides four skills:
+The `radius` Claude Code plugin provides four skills:
 
 - `radius-dev` for Radius Network application development
 - `x402` for paying x402 endpoints (agents, terminals, app buyers) and the protocol
@@ -33,12 +33,14 @@ the canonical source for current Radius skills. The former `skills` and
 
 ```sh
 claude plugin marketplace add radiustechsystems/tools
-claude plugin install radius-dev@radius-cli
+claude plugin install radius@tools
 ```
 
-The marketplace keeps the name `radius-cli` so existing installations retain
-their identity after the GitHub repository rename to `tools`. The plugin name
-remains `radius-dev`; continue using `radius-dev@radius-cli` for installs and updates.
+The plugin is `radius`, and the marketplace is `tools`. Plugin 0.2.0 replaces
+the older `radius-dev@radius-cli` install identity. Follow the
+[one-time migration commands](../../docs/repository-migration.md#claude-plugin-name-migration)
+if it is already installed. Individual skill names stay the same; Claude's
+plugin prefix becomes `radius`, for example `/radius:sell-api`.
 
 For Codex, run this in your application directory:
 
@@ -54,7 +56,7 @@ The [public flat skill files](https://docs.radiustech.xyz/build/coding-assistant
 are expanded reading references; install the full directories for supporting scripts.
 
 After a new plugin version is published, update an existing installation with
-`claude plugin update radius-dev@radius-cli`. Automatic updates depend on the
+`claude plugin update radius@tools`. Automatic updates depend on the
 user's marketplace setting.
 
 The plugin is versioned independently from the `radius-cli` and `radius-sdk`
