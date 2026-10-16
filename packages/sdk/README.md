@@ -210,13 +210,16 @@ const receipt = getPaymentReceipt(res, payFetch.network);   // { success, transa
   the amount actually charged, which is validated against the signed maximum (`invalid_receipt`
   otherwise). The Radius facilitator does not advertise `upto` yet, so it is unit-tested only.
 - Redirects: `fetch` follows them before the 402 (its limit of 20) and the request is paid at the final URL
-  (`response.url`), with the price cap and `onPaymentRequired` applied to that offer. The paid request repeats
-  the original method and body there, as `@x402/fetch` and `@x402/axios` do. After a 301, 302 or 303, fetch has
-  turned a POST into a GET on the way to the 402, so the final URL saw a GET but is paid with the POST. The paid request is sent with `redirect: 'manual'`;
-  if the seller redirects after payment, the redirect is followed with a plain GET/HEAD that carries no
-  payment header (and no `Authorization` or `Cookie` on another origin), `onPaid` gets the receipt from
-  the redirect's `PAYMENT-RESPONSE`, and the final response carries that header. In browsers
-  `redirect: 'manual'` yields an opaque response (status 0), which cannot be followed.
+  (`response.url`), with the price cap and `onPaymentRequired` applied to that offer. For GET and HEAD that
+  is all there is to it. POST and other methods are where x402 clients diverge (`@x402/fetch` and
+  `@x402/axios` replay the original request through redirects, the Go client pays per hop, the Python
+  httpx client does not follow by default); we replay the original method and body at the final URL, even
+  though after a 301, 302 or 303 fetch has already turned a POST into a GET on the way to the 402. The paid
+  request is sent with `redirect: 'manual'`. If the seller redirects after payment, the redirect is
+  followed with the same method but no body, no payment header, and no `Authorization` or `Cookie` on
+  another origin; `onPaid` gets the receipt from the redirect's `PAYMENT-RESPONSE`, and the final response
+  carries that header. In browsers `redirect: 'manual'` yields an opaque response (status 0), which cannot
+  be followed.
 - Permit2 approval handled either way: when the server's facilitator sponsors it
   (`eip2612GasSponsoring`), a wallet holding only SBC pays without any on-chain transaction; when
   it does not, the SDK sends one unlimited approval from the signer (`permit2Approval: 'auto'`,
